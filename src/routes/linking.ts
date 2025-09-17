@@ -23,6 +23,12 @@ export function registerLinkingRoutes(app: Express) {
   app.post('/api/link/verify', async (req: Request, res: Response) => {
     try {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
+      console.log('[link/verify] request', {
+        supabaseUserId,
+        hasAuth: !!req.headers.authorization,
+        code: (req.body as any)?.code,
+        ip: req.ip,
+      });
       if (!supabaseUserId) {
         return res.status(401).json({ ok: false, error: 'authentication_required' });
       }
@@ -37,6 +43,7 @@ export function registerLinkingRoutes(app: Express) {
       });
 
       if (!linkingCode) {
+        console.warn('[link/verify] code not found', { code: normalizedCode });
         return res.status(404).json({ ok: false, error: 'code_not_found' });
       }
 
@@ -55,6 +62,7 @@ export function registerLinkingRoutes(app: Express) {
       });
 
       if (linkingCode.used) {
+        console.warn('[link/verify] code already used', { code: linkingCode.code });
         return res.status(410).json({ ok: false, error: 'code_already_used' });
       }
 
@@ -72,20 +80,26 @@ export function registerLinkingRoutes(app: Express) {
           return res.status(409).json({ ok: false, error: 'already_linked' });
         }
 
-        await prisma.account_links.create({
-          data: {
-            oauth_provider: linkingCode.oauth_provider,
-            oauth_subject: linkingCode.oauth_subject,
-            supabase_user_id: supabaseUserId,
-            link_initiated_by: 'mcp',
-          },
-        });
+       await prisma.account_links.create({
+         data: {
+           oauth_provider: linkingCode.oauth_provider,
+           oauth_subject: linkingCode.oauth_subject,
+           supabase_user_id: supabaseUserId,
+           link_initiated_by: 'mcp',
+         },
+       });
 
-        await prisma.linking_codes.update({
-          where: { code: normalizedCode },
-          data: { used: true },
-        });
+       await prisma.linking_codes.update({
+         where: { code: normalizedCode },
+         data: { used: true },
+       });
 
+        console.log('[link/verify] linked via code', {
+          code: linkingCode.code,
+          provider: linkingCode.oauth_provider,
+          subject: linkingCode.oauth_subject,
+          supabaseUserId,
+        });
         return res.json({
           ok: true,
           message: 'Successfully linked MCP account',
@@ -107,6 +121,12 @@ export function registerLinkingRoutes(app: Express) {
   app.get('/api/link/status', async (req: Request, res: Response) => {
     try {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
+      console.log('[link/status] request', {
+        hasAuth: !!req.headers.authorization,
+        origin: req.headers.origin,
+        supabaseUserId,
+        ip: req.ip,
+      });
       if (!supabaseUserId) {
         return res.status(401).json({ ok: false, error: 'authentication_required' });
       }

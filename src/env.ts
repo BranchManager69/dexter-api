@@ -12,7 +12,7 @@ function preloadParentEnv() {
       path.resolve(cwd, '../.env'),               // alpha/.env (if ever used)
       path.resolve(cwd, '../../token-ai/.env'),   // token-ai/.env as fallback
     ];
-    const needed = new Set(['OPENAI_API_KEY', 'OPENAI_REALTIME_MODEL', 'TEXT_MODEL', 'MCP_URL']);
+    const needed = new Set(['OPENAI_API_KEY', 'OPENAI_REALTIME_MODEL', 'TEXT_MODEL', 'MCP_URL', 'SUPABASE_URL', 'SUPABASE_ANON_KEY']);
     for (const p of candidates) {
       if (fs.existsSync(p)) {
         const parsed = dotenv.parse(fs.readFileSync(p));
@@ -46,6 +46,8 @@ const envSchema = z.object({
   MCP_ALLOWED_TOOLS_VOICE: z.string().optional().default(''),
   PORT: z.coerce.number().default(3030),
   ALLOWED_ORIGINS: z.string().default('*'),
+  SUPABASE_URL: z.string().optional().default(''),
+  SUPABASE_ANON_KEY: z.string().optional().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -62,5 +64,7 @@ export function loadEnv(): Env {
     MCP_ALLOWED_TOOLS_VOICE: process.env.MCP_ALLOWED_TOOLS_VOICE,
     PORT: process.env.PORT,
     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+    SUPABASE_URL: process.env.SUPABASE_URL,
+    SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
   });
 }

@@ -8,9 +8,9 @@ function preloadParentEnv() {
   try {
     const cwd = process.cwd();
     const candidates = [
-      path.resolve(cwd, '../../.env'),            // repo root
-      path.resolve(cwd, '../.env'),               // alpha/.env (if ever used)
-      path.resolve(cwd, '../../token-ai/.env'),   // token-ai/.env as fallback
+      path.resolve(cwd, '../../.env'),  // repo root
+      path.resolve(cwd, '../.env'),     // alpha/.env (if present)
+      path.resolve(cwd, '.env'),        // service-local .env
     ];
     const needed = new Set([
       'OPENAI_API_KEY',

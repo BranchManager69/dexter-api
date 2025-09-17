@@ -1,0 +1,687 @@
+generator client {
+  provider        = "prisma-client-js"
+  output          = "../node_modules/.prisma/client"
+  previewFeatures = ["fullTextSearchPostgres"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Agent memory store for per-token AI context/state
+model agent_memory {
+  token_address      String   @id @db.VarChar(44)
+  schema_version     String   @default("v1")
+  interactions_count Int      @default(0)
+  digest_latest      String?  @db.Text
+  data               Json     @default("{}")
+  created_at         DateTime @default(now()) @db.Timestamptz(6)
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  @@map("agent_memory")
+}
+
+/// Final AI analyses for tokens (persisted JSON output)
+model ai_token_analyses {
+  id              Int      @id @default(autoincrement())
+  token_address   String   @db.VarChar(44)
+  created_at      DateTime @default(now()) @db.Timestamptz(6)
+  model           String?
+  api             String?
+  tool_calls_made Int?
+  timings         Json?
+  web_search_used Boolean?
+  web_citations   Json?
+  token_type      String?
+  branch_score    Int?
+  risk_score      Int?
+  summary         String?  @db.Text
+  project_summary String?  @db.Text
+  file_path       String?
+  analysis_json   Json
+
+  @@index([token_address, created_at])
+  @@map("ai_token_analyses")
+}
+
+/// Tracked tokens
+model tokens {
+  id                           Int                         @id @default(autoincrement())
+  address                      String                      @unique(map: "unique_token_address")
+  symbol                       String?
+  name                         String?
+  decimals                     Int?                        @default(9)
+  is_active                    Boolean                     @default(false)
+  created_at                   DateTime?                   @default(now()) @db.Timestamptz(6)
+  image_url                    String?
+  description                  String?
+  color                        String?                     @default("#888888")
+  updated_at                   DateTime?                   @updatedAt @db.Timestamptz(6)
+  coingeckoId                  String?
+  tags                         Json?
+  last_price_change            DateTime?
+  last_refresh_attempt         DateTime?
+  last_refresh_success         DateTime?
+  priority_score               Int                         @default(0)
+  refresh_interval_seconds     Int                         @default(30)
+  refresh_metadata             Json?                       @default("{}")
+  raw_supply                   BigInt?
+  total_supply                 Decimal?                    @db.Decimal(38, 18)
+  discovery_count              Int?                        @default(0)
+  metadata_status              String?                     @default("pending")
+  last_priority_calculation    DateTime?
+  header_image_url             String?
+  open_graph_image_url         String?
+  first_seen_on_jupiter_at     DateTime?                   @default(now()) @db.Timestamptz(6)
+  last_is_active_evaluation_at DateTime?
+  last_jupiter_sync_at         DateTime?                   @updatedAt
+  manually_activated           Boolean                     @default(false)
+  metadata_last_updated_at     DateTime?
+  degenduel_score              Decimal?                    @default(0) @db.Decimal(20, 8)
+  score_calculated_at          DateTime?                   @db.Timestamptz(6)
+  trend_category               String?                     @default("Active") @db.VarChar(50)
+  momentum_indicator           String?                     @default("stable") @db.VarChar(50)
+  source                       String?                     @db.VarChar(50)
+  launchpad                    String?                     @db.VarChar(50)
+  // 🚀 REVOLUTIONARY POOL-DERIVED PRICING FIELDS
+  pool_derived_price           Decimal?                    @db.Decimal(20, 10)
+  pool_derived_volume_24h      Decimal?                    @db.Decimal(20, 2)
+  pool_derived_liquidity       Decimal?                    @db.Decimal(20, 2)
+  pool_derived_market_cap      Decimal?                    @db.Decimal(20, 2)
+  price_calculation_method     String?                     @db.VarChar(50)
+  pool_price_calculated_at     DateTime?                   @db.Timestamptz(6)
+  // Relations to existing tables only
+  token_socials                token_socials[]
+  token_websites               token_websites[]
+
+  @@index([symbol], map: "idx_tokens_symbol")
+  @@index([degenduel_score(sort: Desc)], map: "idx_tokens_degenduel_score")
+  @@index([is_active, degenduel_score(sort: Desc)], map: "idx_tokens_active_score")
+  @@index([trend_category], map: "idx_tokens_trend_category")
+  @@index([is_active, metadata_status, degenduel_score(sort: Desc)], map: "idx_tokens_common_query")
+  @@map("tokens")
+}
+
+/// Custodial Solana wallets
+model managed_wallets {
+  id                    String   @id @default(uuid())
+  public_key            String   @unique @db.VarChar(44)
+  encrypted_private_key String
+  label                 String?  @db.VarChar(255)
+  status                String   @default("active") @db.VarChar(20)
+  metadata              Json?    @default("{}")
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime @updatedAt @db.Timestamptz(6)
+  memo                  String?
+  // Removed ownerId - wallets are linked via oauth_user_wallets instead
+  ai_trade_executions   ai_trade_executions[]
+  oauth_links           oauth_user_wallets[]
+  @@map("managed_wallets")
+}
+
+/// OAuth user ↔ wallet mapping for MCP HTTP sessions
+model oauth_user_wallets {
+  id             String   @id @default(uuid())
+  provider       String   @db.VarChar(255)
+  subject        String   @db.VarChar(255)
+  email          String?  @db.VarChar(255)
+  wallet_id      String
+  default_wallet Boolean  @default(false)
+  created_at     DateTime @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime @updatedAt @db.Timestamptz(6)
+  /// Optional canonical owner mapping to Supabase auth.users.id
+  /// Left for future OAuth enrichment; populated directly from Supabase when available
+  supabase_user_id String? @db.VarChar(255)
+
+  wallet         managed_wallets @relation(fields: [wallet_id], references: [id], onDelete: Cascade)
+
+  @@index([provider, subject])
+  @@index([supabase_user_id])
+  @@unique([provider, subject, wallet_id])
+  @@map("oauth_user_wallets")
+}
+
+/// AI/Voice agent user table (separate from DegenDuel users)
+model ai_app_users {
+  id           String            @id @default(uuid())
+  name         String?           @db.VarChar(255)
+  role         String            @default("user") @db.VarChar(32)
+  ext_user_id  Int?
+  created_at   DateTime          @default(now()) @db.Timestamptz(6)
+  /// Canonical Supabase user reference (auth.users.id) — one-to-one when present
+  supabase_user_id String? @unique @db.VarChar(255)
+
+  // Relations
+  tokens       ai_user_tokens[]
+  settings     ai_user_settings?
+  aliases      ai_wallet_aliases[]
+  audits       ai_trade_audit[]
+  // External mapping to DegenDuel users (optional); kept as scalar to avoid cross-relation requirement
+
+  @@map("ai_app_users")
+}
+
+/// Mapping from dev/runtime token to ai_app_users
+model ai_user_tokens {
+  token       String      @id @db.VarChar(255)
+  user_id     String
+  created_at  DateTime    @default(now()) @db.Timestamptz(6)
+
+  user        ai_app_users @relation(fields: [user_id], references: [id])
+
+  @@map("ai_user_tokens")
+}
+
+/// Per-user default/last-used wallet settings for the AI agent
+model ai_user_settings {
+  user_id            String   @id
+  default_wallet_id  String?
+  last_used_wallet_id String?
+  updated_at         DateTime @default(now()) @db.Timestamptz(6)
+
+  user             ai_app_users     @relation(fields: [user_id], references: [id])
+
+  @@index([user_id])
+  @@map("ai_user_settings")
+}
+
+/// Friendly aliases per user for managed wallets (e.g., "trading", "treasury")
+model ai_wallet_aliases {
+  id         String   @id @default(uuid())
+  user_id    String
+  wallet_id  String
+  alias      String   @db.VarChar(255)
+  created_at DateTime @default(now()) @db.Timestamptz(6)
+
+  user    ai_app_users    @relation(fields: [user_id], references: [id])
+
+  @@unique([user_id, alias])
+  @@index([user_id, alias])
+  @@index([wallet_id])
+  @@map("ai_wallet_aliases")
+}
+
+/// Append-only trade audit for AI-triggered actions
+model ai_trade_audit {
+  id          BigInt    @id @default(autoincrement())
+  user_id     String?
+  wallet_id   String?
+  token_mint  String?   @db.VarChar(64)
+  action      String    @db.VarChar(32)
+  amount_ui   Decimal?  @db.Decimal(24, 9)
+  tx_hash     String?   @db.VarChar(128)
+  frames_json Json?
+  created_at  DateTime  @default(now()) @db.Timestamptz(6)
+
+  user    ai_app_users?    @relation(fields: [user_id], references: [id])
+
+  @@index([user_id, created_at])
+  @@index([wallet_id, created_at])
+  @@map("ai_trade_audit")
+}
+
+model token_socials {
+  id         Int       @id @default(autoincrement())
+  token_id   Int
+  type       String
+  url        String
+  created_at DateTime? @default(now())
+  token      tokens    @relation(fields: [token_id], references: [id])
+
+  @@index([token_id])
+  @@map("token_socials")
+}
+
+model token_websites {
+  id         Int       @id @default(autoincrement())
+  token_id   Int
+  label      String?
+  url        String
+  created_at DateTime? @default(now())
+  token      tokens    @relation(fields: [token_id], references: [id])
+
+  @@index([token_id])
+  @@map("token_websites")
+}
+
+model config_solana_engine {
+  id                      String   @id @default(cuid())
+  token_metadata_ttl      Int      @default(86400)
+  token_price_ttl         Int      @default(3600)
+  wallet_data_ttl         Int      @default(300)
+  connection_strategy     String   @default("adaptive")
+  health_check_interval   Int      @default(60000)
+  failure_threshold       Int      @default(2)
+  recovery_threshold      Int      @default(3)
+  max_concurrent_requests Int      @default(5)
+  request_spacing_ms      Int      @default(100)
+  base_backoff_ms         Int      @default(250)
+  endpoint_weights        Json?    @default("{}")
+  admin_bypass_cache      Boolean  @default(false)
+  last_updated            DateTime @default(now()) @updatedAt
+  updated_by              String?  @db.VarChar(44)
+
+  @@map("config_solana_engine")
+}
+
+model telegram_users {
+  id               Int                 @id @default(autoincrement())
+  telegram_user_id String              @unique @db.VarChar(20)
+  username         String?             @db.VarChar(32)
+  first_name       String?             @db.VarChar(64)
+  last_name        String?             @db.VarChar(64)
+  is_bot           Boolean             @default(false)
+  is_admin         Boolean             @default(false)
+  is_linked        Boolean             @default(false)
+  warning_count    Int                 @default(0)
+  timeout_count    Int                 @default(0)
+  ban_count        Int                 @default(0)
+  first_seen       DateTime            @default(now()) @db.Timestamptz(6)
+  last_seen        DateTime            @default(now()) @db.Timestamptz(6)
+  last_message_at  DateTime            @default(now()) @db.Timestamptz(6)
+  created_at       DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime            @updatedAt @db.Timestamptz(6)
+  messages         telegram_messages[]
+
+  @@index([telegram_user_id])
+  @@index([username])
+  @@index([last_seen])
+  @@index([is_admin])
+  @@index([is_linked])
+  @@map("telegram_users")
+}
+
+model telegram_messages {
+  id                              Int            @id @default(autoincrement())
+  message_id                      String         @db.VarChar(20)
+  chat_id                         String         @db.VarChar(20)
+  telegram_user_id                String         @db.VarChar(20)
+  username                        String?        @db.VarChar(32)
+  first_name                      String?        @db.VarChar(64)
+  text                            String?
+  message_type                    String         @default("text") @db.VarChar(20)
+  caption                         String?
+  forward_from_user_id            String?        @db.VarChar(20)
+  forward_from_chat_id            String?        @db.VarChar(20)
+  forward_from_chat_type          String?        @db.VarChar(20)
+  forward_signature               String?        @db.VarChar(100)
+  forward_date                    DateTime?      @db.Timestamptz(6)
+  reply_to_message_id             String?        @db.VarChar(20)
+  reply_to_text                   String?
+  reply_to_user_id                String?        @db.VarChar(20)
+  // NEW: External reply and quote support for latest Telegram Bot API
+  external_reply_chat_id          String?        @db.VarChar(20)
+  external_reply_origin_type      String?        @db.VarChar(20)
+  external_reply_author_signature String?        @db.VarChar(100)
+  quote_text                      String?
+  quote_position                  Int?
+  is_automatic_forward            Boolean        @default(false)
+  has_protected_content           Boolean        @default(false)
+  has_media                       Boolean        @default(false)
+  media_type                      String?        @db.VarChar(20)
+  is_edited                       Boolean        @default(false)
+  event_type                      String?        @db.VarChar(20)
+  raw_data                        Json?
+  created_at                      DateTime       @default(now()) @db.Timestamptz(6)
+  user                            telegram_users @relation(fields: [telegram_user_id], references: [telegram_user_id], onDelete: Cascade)
+
+  @@unique([chat_id, message_id])
+  @@index([chat_id, created_at(sort: Desc)])
+  @@index([telegram_user_id])
+  @@index([created_at(sort: Desc)])
+  @@index([message_type])
+  @@index([event_type])
+  @@index([chat_id, telegram_user_id, created_at(sort: Desc)])
+  // NEW: Indexes for spam detection based on external replies and quotes
+  @@index([external_reply_chat_id])
+  @@index([quote_text])
+  @@map("telegram_messages")
+}
+
+/// Minimal persistence for Dexter (f.k.a. TokenAI) Telegram message fetches (non-conflicting with moderation tables)
+model telegram_messages_tokenai {
+  id             Int       @id @default(autoincrement())
+  mint           String    @db.VarChar(44)
+  chat_ref       String    @db.VarChar(255)
+  message_id     String    @db.VarChar(40)
+  date           DateTime? @db.Timestamptz(6)
+  text           String?
+  views          Int?
+  forwards       Int?
+  reply_to_msg_id String?  @db.VarChar(40)
+  out            Boolean   @default(false)
+  created_at     DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@unique([mint, chat_ref, message_id])
+  @@index([mint, chat_ref, date(sort: Desc)])
+  @@map("telegram_messages_tokenai")
+}
+
+// Twitter profile snapshots (exists in DB via prior migration; adding model back to prevent drops)
+model twitter_snapshots {
+  id                Int      @id @default(autoincrement())
+  token_address     String   @db.VarChar(44)
+  snapshot_time     DateTime @default(now()) @db.Timestamptz(6)
+  follower_count    Int?
+  following_count   Int?
+  tweet_count       Int?
+  is_verified       Boolean?
+  profile_image_url String?
+  header_image_url  String?
+  bio               String?
+  location          String?
+  website           String?
+  join_date         String?
+  display_name      String?  @db.VarChar(200)
+  handle            String?  @db.VarChar(100)
+
+  // Note: Omitting Prisma relation field to avoid back-relation requirement; using scalar FK only
+
+  @@index([token_address, snapshot_time], map: "twitter_snapshots_token_address_snapshot_time_idx")
+  @@index([snapshot_time], map: "twitter_snapshots_snapshot_time_idx")
+  @@map("twitter_snapshots")
+}
+
+// Twitter/X community snapshots (exists in DB via prior migration; adding model back to prevent drops)
+model twitter_community_snapshots {
+  id             Int      @id @default(autoincrement())
+  token_address  String   @db.VarChar(44)
+  community_url  String
+  community_name String?
+  snapshot_time  DateTime @default(now()) @db.Timestamptz(6)
+  member_count   Int?
+  description    String?
+  is_private     Boolean  @default(false)
+  rules          Json?
+
+  // Note: Omitting Prisma relation field to avoid back-relation requirement; using scalar FK only
+
+  @@index([token_address, snapshot_time], map: "twitter_community_snapshots_token_address_snapshot_time_idx")
+  @@index([community_url], map: "twitter_community_snapshots_community_url_idx")
+  @@map("twitter_community_snapshots")
+}
+
+// Tweets we track (exists in DB via prior migration; adding model back to prevent drops)
+model twitter_tweets {
+  tweet_id           String    @id @db.VarChar(32)
+  token_address      String    @db.VarChar(44)
+  author_handle      String    @db.VarChar(50)
+  author_name        String?
+  author_verified    Boolean   @default(false)
+  tweet_text         String?
+  tweet_timestamp    DateTime
+  tweet_url          String?
+  first_seen_at      DateTime  @default(now()) @db.Timestamptz(6)
+  last_seen_at       DateTime  @default(now()) @db.Timestamptz(6)
+  deleted_at         DateTime? @db.Timestamptz(6)
+  likes_count        Int?      @default(0)
+  retweets_count     Int?      @default(0)
+  replies_count      Int?      @default(0)
+  views_count        BigInt?
+  is_reply           Boolean   @default(false)
+  reply_to_handle    String?   @db.VarChar(50)
+  replied_tweet_id   String?   @db.VarChar(32)
+  replied_tweet_data Json?
+  is_retweet         Boolean   @default(false)
+  retweet_of_handle  String?   @db.VarChar(50)
+  is_quote_tweet     Boolean   @default(false)
+  quoted_tweet_id    String?   @db.VarChar(32)
+  quoted_tweet_data  Json?
+  is_thread          Boolean   @default(false)
+  has_media          Boolean   @default(false)
+  media_urls         Json?
+  hashtags           Json?
+  mentions           Json?
+  external_links     Json?
+
+  // Note: Omitting Prisma relation field to avoid back-relation requirement; using scalar FK only
+
+  @@index([token_address, tweet_timestamp], map: "twitter_tweets_token_address_tweet_timestamp_idx")
+  @@index([author_handle], map: "twitter_tweets_author_handle_idx")
+  @@index([deleted_at], map: "twitter_tweets_deleted_at_idx")
+  @@index([first_seen_at], map: "twitter_tweets_first_seen_at_idx")
+  @@map("twitter_tweets")
+}
+
+// Tracks tweet price prediction verification scores
+model tweet_prediction_scores {
+  id                Int      @id @default(autoincrement())
+  tweet_id          String   @db.VarChar(32)
+  token_address     String   @db.VarChar(44)
+  author_handle     String   @db.VarChar(50)
+  tweet_timestamp   DateTime
+  prediction_type   String   @db.VarChar(20) // pump, dump, target_price
+  prediction_text   String?  @db.Text // The actual prediction extracted
+  target_price      Float?   // For price targets
+  minutes_checked   Int      // How many minutes after tweet we checked
+  price_before      Float    // Price at tweet time
+  price_after       Float    // Price at check time
+  price_change_pct  Float    // Percentage change
+  volume_before     Float?   // Volume at tweet time
+  volume_after      Float?   // Volume at check time
+  accuracy_score    Float    // 0-100 accuracy rating
+  verdict           String   @db.Text // Human-readable verdict
+  metadata          Json?    // Additional context/stats
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  
+  @@index([tweet_id])
+  @@index([token_address, created_at])
+  @@index([author_handle, accuracy_score])
+  @@map("tweet_prediction_scores")
+}
+
+// Tracks members of Twitter/X Communities. One row per (community_url, user_handle).
+model twitter_community_members {
+  token_address String   @db.VarChar(44)
+  community_url String
+  user_handle   String   @db.VarChar(50)
+  display_name  String?
+  avatar_url    String?
+  role          String   @default("member") @db.VarChar(20)
+  first_seen_at DateTime @default(now()) @db.Timestamptz(6)
+  last_seen_at  DateTime @default(now()) @db.Timestamptz(6)
+
+  @@id([community_url, user_handle])
+  @@index([token_address])
+  @@index([community_url])
+  @@index([role])
+  @@map("twitter_community_members")
+}
+
+// Removed api_keys model - this was for DegenDuel
+
+// AI Trading Decision tracking
+model ai_trade_decisions {
+  id                    String    @id @default(uuid())
+  token_address         String    @db.VarChar(44)
+  decision_type         String    @db.VarChar(20) // 'buy', 'sell', 'hold', 'exit'
+  action                String    @db.VarChar(20) // 'market_buy', 'limit_buy', 'market_sell', 'stop_loss', 'take_profit'
+  confidence_score      Decimal   @db.Decimal(5, 4) // 0.0000 to 1.0000
+  confidence_components Json?     @default("{}") // {technical: 0.4, social: 0.3, fundamental: 0.2, risk_adjusted: 0.1}
+  
+  // Trade parameters
+  amount_sol            Decimal?  @db.Decimal(20, 9) // Amount in SOL to trade
+  price_target          Decimal?  @db.Decimal(20, 9) // Target price for limit orders
+  slippage_tolerance    Decimal   @default(0.02) @db.Decimal(5, 4) // Max slippage (2% default)
+  
+  // Analysis context
+  analysis_data         Json?     @default("{}") // Full analysis that led to decision
+  indicators            Json?     @default("{}") // Technical indicators at decision time
+  market_conditions     Json?     @default("{}") // Market state snapshot
+  
+  // Execution tracking
+  executed              Boolean   @default(false)
+  execution_id          String?   // Links to ai_trade_executions.id
+  cancelled             Boolean   @default(false)
+  cancel_reason         String?   @db.Text
+  
+  // Timestamps
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  executed_at           DateTime? @db.Timestamptz(6)
+  expires_at            DateTime? @db.Timestamptz(6) // For time-bound orders
+  
+  // Relations
+  execution             ai_trade_executions?
+  
+  @@index([token_address, created_at])
+  @@index([executed, created_at])
+  @@map("ai_trade_decisions")
+}
+
+// AI Trade Executions tracking
+model ai_trade_executions {
+  id                    String    @id @default(uuid())
+  decision_id           String    @unique
+  wallet_id             String    // References managed_wallets.id
+  token_address         String    @db.VarChar(44)
+  
+  // Transaction details
+  signature             String    @db.VarChar(88) // Solana transaction signature
+  transaction_type      String    @db.VarChar(20) // 'buy', 'sell'
+  
+  // Amounts
+  amount_in             Decimal   @db.Decimal(20, 9) // Amount sent
+  amount_out            Decimal   @db.Decimal(20, 9) // Amount received
+  token_in              String    @db.VarChar(44) // Token sent (address)
+  token_out             String    @db.VarChar(44) // Token received (address)
+  
+  // Prices
+  execution_price       Decimal   @db.Decimal(20, 9) // Actual execution price
+  slippage              Decimal?  @db.Decimal(5, 4) // Actual slippage percentage
+  
+  // Fees
+  gas_fee               Decimal?  @db.Decimal(20, 9) // Network fee in SOL
+  platform_fee          Decimal?  @db.Decimal(20, 9) // Jupiter/DEX fee
+  
+  // Position tracking
+  position_size_before  Decimal?  @db.Decimal(20, 9) // Token balance before trade
+  position_size_after   Decimal?  @db.Decimal(20, 9) // Token balance after trade
+  
+  // Status
+  status                String    @default("pending") @db.VarChar(20) // 'pending', 'confirmed', 'failed'
+  error_message         String?   @db.Text
+  
+  // Timestamps
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  confirmed_at          DateTime? @db.Timestamptz(6)
+  
+  // Relations
+  decision              ai_trade_decisions @relation(fields: [decision_id], references: [id], onDelete: Cascade)
+  wallet                managed_wallets    @relation(fields: [wallet_id], references: [id])
+  entry_positions       ai_trade_performance[] @relation("EntryExecution")
+  exit_positions        ai_trade_performance[] @relation("ExitExecution")
+  
+  @@index([wallet_id, created_at])
+  @@index([status, created_at])
+  @@map("ai_trade_executions")
+}
+
+// AI Trade Performance tracking
+model ai_trade_performance {
+  id                    String    @id @default(uuid())
+  token_address         String    @db.VarChar(44)
+  
+  // Position details
+  entry_execution_id    String    
+  exit_execution_id     String?   
+  
+  // Entry metrics
+  entry_price           Decimal   @db.Decimal(20, 9)
+  entry_amount_sol      Decimal   @db.Decimal(20, 9)
+  entry_timestamp       DateTime  @db.Timestamptz(6)
+  
+  // Exit metrics (NULL if position still open)
+  exit_price            Decimal?  @db.Decimal(20, 9)
+  exit_amount_sol       Decimal?  @db.Decimal(20, 9)
+  exit_timestamp        DateTime? @db.Timestamptz(6)
+  exit_reason           String?   @db.VarChar(50) // 'take_profit', 'stop_loss', 'sentiment_flip', 'time_stop', 'manual'
+  
+  // Performance metrics
+  pnl_sol               Decimal?  @db.Decimal(20, 9) // Profit/Loss in SOL
+  pnl_percentage        Decimal?  @db.Decimal(10, 4) // Profit/Loss percentage
+  holding_period_minutes Int?     // How long position was held
+  max_drawdown          Decimal?  @db.Decimal(10, 4) // Maximum drawdown during hold
+  max_profit            Decimal?  @db.Decimal(10, 4) // Maximum profit during hold
+  
+  // Analysis scores at entry/exit
+  entry_confidence      Decimal   @db.Decimal(5, 4)
+  entry_analysis        Json?     @default("{}")
+  exit_analysis         Json?     @default("{}")
+  
+  // Learning metadata
+  strategy_version      String?   @db.VarChar(20) // Which strategy version was used
+  market_regime         String?   @db.VarChar(20) // 'bull', 'bear', 'crab', 'volatile'
+  lessons_learned       Json?     @default("{}") // Patterns identified for learning
+  
+  // Status
+  is_winner             Boolean?  // True if profitable, False if loss, NULL if open
+  status                String    @default("open") @db.VarChar(20) // 'open', 'closed'
+  
+  // Timestamps
+  created_at            DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at            DateTime  @updatedAt @db.Timestamptz(6)
+  
+  // Relations
+  entry_execution       ai_trade_executions @relation("EntryExecution", fields: [entry_execution_id], references: [id])
+  exit_execution        ai_trade_executions? @relation("ExitExecution", fields: [exit_execution_id], references: [id])
+  
+  @@index([token_address, created_at])
+  @@index([status, created_at])
+  @@map("ai_trade_performance")
+}
+
+// AI Strategy Parameters for autonomous trading
+model ai_strategy_parameters {
+  id                      String    @id @default(uuid())
+  version                 String    @unique @db.VarChar(20) // 'v1.0', 'v1.1', etc.
+  is_active               Boolean   @default(false) // Only one version active at a time
+  
+  // Risk parameters
+  max_position_size_sol   Decimal   @default(0.5) @db.Decimal(20, 9) // Max SOL per position
+  max_portfolio_exposure  Decimal   @default(0.3) @db.Decimal(5, 4) // Max % of portfolio in trades
+  max_single_loss_sol     Decimal   @default(0.1) @db.Decimal(20, 9) // Max loss per trade
+  stop_loss_percentage    Decimal   @default(0.15) @db.Decimal(5, 4) // Default stop loss 15%
+  take_profit_percentage  Decimal   @default(0.3) @db.Decimal(5, 4) // Default take profit 30%
+  
+  // Decision thresholds
+  min_confidence_score    Decimal   @default(0.65) @db.Decimal(5, 4) // Min confidence to trade
+  min_liquidity_usd       Decimal   @default(50000) @db.Decimal(20, 2) // Min liquidity requirement
+  min_volume_24h_usd      Decimal   @default(10000) @db.Decimal(20, 2) // Min 24h volume
+  max_price_impact        Decimal   @default(0.02) @db.Decimal(5, 4) // Max acceptable price impact
+  
+  // Timing parameters
+  scan_interval_seconds   Int       @default(300) // How often to scan (5 min)
+  decision_cooldown_minutes Int     @default(30) // Min time between decisions on same token
+  max_hold_duration_hours Int       @default(72) // Max time to hold position
+  
+  // Strategy weights
+  technical_weight        Decimal   @default(0.4) @db.Decimal(5, 4)
+  social_weight           Decimal   @default(0.3) @db.Decimal(5, 4)
+  fundamental_weight      Decimal   @default(0.2) @db.Decimal(5, 4)
+  risk_weight             Decimal   @default(0.1) @db.Decimal(5, 4)
+  
+  // Circuit breakers
+  max_daily_trades        Int       @default(10)
+  max_daily_loss_sol      Decimal   @default(1.0) @db.Decimal(20, 9)
+  max_consecutive_losses  Int       @default(3)
+  pause_on_circuit_break  Boolean   @default(true)
+  
+  // Performance triggers for adjustment
+  min_win_rate            Decimal   @default(0.4) @db.Decimal(5, 4) // Below this, reduce confidence threshold
+  target_sharpe_ratio     Decimal   @default(1.5) @db.Decimal(10, 4) // Target risk-adjusted return
+  
+  // Metadata
+  description             String?   @db.Text
+  created_by              String    @default("system") @db.VarChar(100)
+  performance_stats       Json?     @default("{}") // Historical performance with these params
+  
+  // Timestamps
+  created_at              DateTime  @default(now()) @db.Timestamptz(6)
+  activated_at            DateTime? @db.Timestamptz(6)
+  deactivated_at          DateTime? @db.Timestamptz(6)
+  
+  @@index([is_active, version])
+  @@map("ai_strategy_parameters")
+}

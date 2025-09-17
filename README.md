@@ -9,13 +9,18 @@ TypeScript API that orchestrates OpenAI Agents with hosted MCP tools, and mints 
 - GET `/mcp/health` → Pass-through to the configured MCP server
 
 ## Config
-Copy `.env.example` to `.env` and set:
-- `OPENAI_API_KEY` (required)
-- `OPENAI_REALTIME_MODEL` (default: `gpt-realtime`)
-- `TEXT_MODEL` (default: `gpt-5-mini`) — override per request with `{"model":"gpt-5"}`
-- `MCP_URL` (default: `https://dexter.cash/mcp`)
-- `PORT` (default: `3030`)
-- `ALLOWED_ORIGINS` (default: `*`)
+Copy `.env.example` to `.env` and set at minimum:
+- `DATABASE_URL` – Postgres connection string (Supabase pooled URL)
+- `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_JWT_SECRET`
+- `OPENAI_API_KEY`
+
+Optional overrides:
+- `OPENAI_API_BASE` (default `https://api.openai.com`)
+- `OPENAI_REALTIME_MODEL` (default `gpt-realtime`)
+- `TEXT_MODEL` (default `gpt-4.1-mini`)
+- `MCP_URL` (default `https://dexter.cash/mcp`)
+- `TOKEN_AI_MCP_TOKEN`, `MCP_ALLOWED_TOOLS_CHAT`, `MCP_ALLOWED_TOOLS_VOICE`
+- `PORT` (default `3030`), `ALLOWED_ORIGINS` (default `*`)
 
 ## Dev
 ```

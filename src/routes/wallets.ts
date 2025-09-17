@@ -1,5 +1,5 @@
 import type { Express, Request, Response } from 'express';
-import prisma from '../../../../config/prisma.js';
+import prisma from '../prisma.js';
 import { getSupabaseUserIdFromRequest } from '../utils/supabase.js';
 
 type SerializedWallet = {
@@ -55,21 +55,36 @@ export function registerWalletRoutes(app: Express) {
         return res.json({ ok: true, user: { id: supabaseUserId }, wallets: [] });
       }
 
-      const walletIds = [...new Set(userLinks.map((link) => link.wallet_id))];
+      const walletIdSet = new Set<string>();
+      for (const link of userLinks) {
+        if (link.wallet_id) {
+          walletIdSet.add(link.wallet_id);
+        }
+      }
+      const walletIds = Array.from(walletIdSet);
       const wallets = await prisma.managed_wallets.findMany({
         where: { id: { in: walletIds } },
       });
 
-      const walletById = new Map<string, ManagedWalletRecord>(
-        wallets.map((wallet) => [wallet.id, wallet as ManagedWalletRecord]),
-      );
+      const walletById = new Map<string, ManagedWalletRecord>();
+      for (const wallet of wallets) {
+        walletById.set(wallet.id, wallet as unknown as ManagedWalletRecord);
+      }
 
-      const defaultWalletId = userLinks.find((link) => link.default_wallet)?.wallet_id || walletIds[0];
+      let defaultWalletId = walletIds[0];
+      for (const link of userLinks) {
+        if (link.default_wallet && link.wallet_id) {
+          defaultWalletId = link.wallet_id;
+          break;
+        }
+      }
 
-      const serialized = walletIds
-        .map((id) => walletById.get(id))
-        .filter((wallet): wallet is ManagedWalletRecord => Boolean(wallet))
-        .map((wallet) => serializeWallet(wallet, { isDefault: wallet.id === defaultWalletId }));
+      const serialized: SerializedWallet[] = [];
+      for (const id of walletIds) {
+        const record = walletById.get(id);
+        if (!record) continue;
+        serialized.push(serializeWallet(record, { isDefault: record.id === defaultWalletId }));
+      }
 
       return res.json({ ok: true, user: { id: supabaseUserId }, wallets: serialized });
     } catch (error: any) {

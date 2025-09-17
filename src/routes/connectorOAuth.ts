@@ -1,6 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import crypto from 'node:crypto';
-import { exchangeRefreshToken, getConnectorTokenTTLSeconds } from '../utils/supabaseAdmin.js';
+import { exchangeRefreshToken, getConnectorTokenTTLSeconds, getSupabaseUserFromAccessToken } from '../utils/supabaseAdmin.js';
 
 type PendingAuthRequest = {
   client_id: string;
@@ -277,5 +277,25 @@ export function registerConnectorOAuthRoutes(app: Express) {
     }
 
     return res.status(400).json({ error: 'unsupported_grant_type' });
+  });
+
+  app.get('/api/connector/oauth/userinfo', async (req: Request, res: Response) => {
+    const header = req.headers['authorization'] || req.headers['Authorization'];
+    const token = typeof header === 'string' ? header.replace(/^Bearer\s+/i, '').trim() : '';
+    if (!token) {
+      return res.status(401).json({ error: 'invalid_token' });
+    }
+    try {
+      const user = await getSupabaseUserFromAccessToken(token);
+      return res.json({
+        sub: user.id,
+        email: user.email || null,
+        app_metadata: user.app_metadata || {},
+        user_metadata: user.user_metadata || {},
+      });
+    } catch (error: any) {
+      console.error('[connector/oauth/userinfo] failed', error?.message || error);
+      return res.status(401).json({ error: 'invalid_token' });
+    }
   });
 }

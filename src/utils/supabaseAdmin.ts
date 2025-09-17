@@ -7,6 +7,13 @@ type SupabaseSessionResponse = {
   user?: { id: string };
 };
 
+type SupabaseUserResponse = {
+  id: string;
+  email?: string;
+  user_metadata?: Record<string, unknown>;
+  app_metadata?: Record<string, unknown>;
+};
+
 function normalizeUrl(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
@@ -48,4 +55,34 @@ export function getConnectorTokenTTLSeconds(): number {
   const days = daysEnv ? Number(daysEnv) : 30;
   if (!Number.isFinite(days) || days <= 0) return 30 * 24 * 60 * 60;
   return Math.floor(days * 24 * 60 * 60);
+}
+
+export async function getSupabaseUserFromAccessToken(accessToken: string): Promise<SupabaseUserResponse> {
+  const supabaseUrlRaw = process.env.SUPABASE_URL || '';
+  const supabaseUrl = supabaseUrlRaw ? normalizeUrl(supabaseUrlRaw) : '';
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+  if (!supabaseUrl || !serviceKey) {
+    throw new Error('SUPABASE_ADMIN_CONFIG_MISSING');
+  }
+
+  const response = await fetch(`${supabaseUrl}/auth/v1/user`, {
+    method: 'GET',
+    headers: {
+      apikey: serviceKey,
+      authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const text = await response.text().catch(() => 'unknown');
+    throw new Error(`supabase_userinfo_failed:${response.status}:${text}`);
+  }
+
+  const data = (await response.json()) as SupabaseUserResponse;
+  if (!data?.id) {
+    throw new Error('supabase_userinfo_missing_id');
+  }
+
+  return data;
 }

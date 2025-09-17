@@ -1,0 +1,11 @@
+{
+  "migrations": [
+    {
+      "name": "20250218_drop_account_link_tables",
+      "checksum": "manual",
+      "startedAt": "2025-02-18T00:00:00.000Z",
+      "finishedAt": "2025-02-18T00:01:00.000Z",
+      "rolledBackAt": null
+    }
+  ]
+}

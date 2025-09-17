@@ -7,14 +7,13 @@ import { chatStreamHandler } from './chatStream.js';
 import { buildSpecialistAgents } from './agents.js';
 import { createRealtimeSessionWithEnv } from './realtime.js';
 
-import { registerLinkingRoutes } from './routes/linking.js';
-import { registerIdentityRoutes } from './routes/identity.js';
 import { registerAuthConfigRoute } from './routes/authConfig.js';
 import { registerWalletRoutes } from './routes/wallets.js';
 import { registerConnectorOAuthRoutes } from './routes/connectorOAuth.js';
 
 export const env = loadEnv();
 export const app = express();
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json({ limit: '2mb' }));
 
 // Basic CORS
@@ -112,7 +111,5 @@ app.get('/tools', async (_req, res) => {
 });
 
 registerAuthConfigRoute(app);
-registerLinkingRoutes(app);
-registerIdentityRoutes(app);
 registerWalletRoutes(app);
 registerConnectorOAuthRoutes(app);

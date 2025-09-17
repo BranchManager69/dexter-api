@@ -12,7 +12,16 @@ function preloadParentEnv() {
       path.resolve(cwd, '../.env'),               // alpha/.env (if ever used)
       path.resolve(cwd, '../../token-ai/.env'),   // token-ai/.env as fallback
     ];
-    const needed = new Set(['OPENAI_API_KEY', 'OPENAI_REALTIME_MODEL', 'TEXT_MODEL', 'MCP_URL', 'SUPABASE_URL', 'SUPABASE_ANON_KEY']);
+    const needed = new Set([
+      'OPENAI_API_KEY',
+      'OPENAI_REALTIME_MODEL',
+      'TEXT_MODEL',
+      'MCP_URL',
+      'SUPABASE_URL',
+      'SUPABASE_ANON_KEY',
+      'SUPABASE_SERVICE_ROLE_KEY',
+      'SUPABASE_JWT_SECRET',
+    ]);
     for (const p of candidates) {
       if (fs.existsSync(p)) {
         const parsed = dotenv.parse(fs.readFileSync(p));
@@ -48,6 +57,8 @@ const envSchema = z.object({
   ALLOWED_ORIGINS: z.string().default('*'),
   SUPABASE_URL: z.string().optional().default(''),
   SUPABASE_ANON_KEY: z.string().optional().default(''),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),
+  SUPABASE_JWT_SECRET: z.string().optional().default(''),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -66,5 +77,7 @@ export function loadEnv(): Env {
     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
     SUPABASE_URL: process.env.SUPABASE_URL,
     SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
+    SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET,
   });
 }

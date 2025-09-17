@@ -1,24 +1,13 @@
+// src/routes/linking.ts
+
+// Legacy flow for linking accounts
+// This is to be replaced with oauth login at connection time
+
 import type { Express, Request, Response } from 'express';
 import prisma from '../../../../config/prisma.js';
 import { getSupabaseUserIdFromRequest } from '../utils/supabase.js';
 
-const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-
-function generateLinkingCode(): string {
-  let code = '';
-  for (let i = 0; i < 6; i += 1) {
-    const index = Math.floor(Math.random() * CODE_CHARS.length);
-    code += CODE_CHARS[index];
-  }
-  return code;
-}
-
-function normalizeCode(code: unknown): string | null {
-  if (typeof code !== 'string') return null;
-  const normalized = code.trim().toUpperCase();
-  return normalized.length >= 6 ? normalized : null;
-}
-
+// Register the routes related to Legacy flow for linking accounts
 export function registerLinkingRoutes(app: Express) {
   app.post('/api/link/verify', async (req: Request, res: Response) => {
     try {
@@ -255,4 +244,27 @@ export function registerLinkingRoutes(app: Express) {
       return res.status(500).json({ ok: false, error: 'internal_error' });
     }
   });
+}
+
+// -- Linking code helpers --
+
+// Characters allowed for link codes (avoids confusing chars)
+const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+// Helper: Generate secure 6-char code
+function generateLinkingCode(): string {
+  // TODO: use a better PRNG
+  let code = '';
+  for (let i = 0; i < 6; i += 1) {
+    const index = Math.floor(Math.random() * CODE_CHARS.length);
+    code += CODE_CHARS[index];
+  }
+  return code;
+}
+
+// Helper: Normalize generated link codes; ensure 6 alphanumeric uppercase chars; etc
+function normalizeCode(code: unknown): string | null {
+  if (typeof code !== 'string') return null;
+  const normalized = code.trim().toUpperCase();
+  return normalized.length >= 6 ? normalized : null;
 }

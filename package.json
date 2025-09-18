@@ -12,7 +12,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "vitest run",
-    "lint": "eslint . --ext .ts,.tsx || true"
+    "lint": "eslint . --ext .ts,.tsx || true",
+    "x402:test": "node scripts/pay-solana-test.mjs"
   },
   "dependencies": {
     "@openai/agents": "^0.1.0",

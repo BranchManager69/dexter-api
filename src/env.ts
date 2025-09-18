@@ -74,6 +74,13 @@ const envSchema = z.object({
   SUPABASE_ANON_KEY: z.string().optional().default(''),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),
   SUPABASE_JWT_SECRET: z.string().optional().default(''),
+  X402_ENABLED: z.coerce.boolean().default(true),
+  X402_FACILITATOR_URL: z.string().url().default('http://127.0.0.1:4070'),
+  X402_PAY_TO: z.string().min(1).default('DEXVS3su4dZQWTvvPnLDJLRK1CeeKG6K3QqdzthgAkNV'),
+  X402_ASSET_MINT: z.string().min(1).default('2KiHzSXdnenDoDNsVsjU6VcvgyyDK27iSoZv6TNDpump'),
+  X402_ASSET_DECIMALS: z.coerce.number().int().min(0).max(18).default(6),
+  X402_PRICE_AMOUNT: z.string().min(1).default('100000000'),
+  X402_PRICE_DESCRIPTION: z.string().default('Test access (100 custom tokens)'),
 });
 
 export type Env = z.infer<typeof envSchema>;
@@ -94,5 +101,12 @@ export function loadEnv(): Env {
     SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET,
+    X402_ENABLED: process.env.X402_ENABLED,
+    X402_FACILITATOR_URL: process.env.X402_FACILITATOR_URL,
+    X402_PAY_TO: process.env.X402_PAY_TO,
+    X402_ASSET_MINT: process.env.X402_ASSET_MINT,
+    X402_ASSET_DECIMALS: process.env.X402_ASSET_DECIMALS,
+    X402_PRICE_AMOUNT: process.env.X402_PRICE_AMOUNT,
+    X402_PRICE_DESCRIPTION: process.env.X402_PRICE_DESCRIPTION,
   });
 }

@@ -10,6 +10,7 @@ import { createRealtimeSessionWithEnv } from './realtime.js';
 import { registerAuthConfigRoute } from './routes/authConfig.js';
 import { registerWalletRoutes } from './routes/wallets.js';
 import { registerConnectorOAuthRoutes } from './routes/connectorOAuth.js';
+import { registerX402Routes } from './payments/registerX402.js';
 
 export const env = loadEnv();
 export const app = express();
@@ -113,3 +114,4 @@ app.get('/tools', async (_req, res) => {
 registerAuthConfigRoute(app);
 registerWalletRoutes(app);
 registerConnectorOAuthRoutes(app);
+registerX402Routes(app, env);

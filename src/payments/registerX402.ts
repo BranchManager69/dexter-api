@@ -3,7 +3,7 @@ import { paymentMiddleware, type SolanaAddress } from 'x402-express';
 import type { RoutesConfig, FacilitatorConfig, Resource } from 'x402/types';
 import type { Env } from '../env.js';
 
-const PAID_ROUTE_PATH = '/paid/test';
+const PRO_SUBSCRIBE_ROUTE = '/pro/subscribe';
 
 export function registerX402Routes(app: Express, env: Env) {
   if (!env.X402_ENABLED) {
@@ -15,7 +15,7 @@ export function registerX402Routes(app: Express, env: Env) {
   };
 
   const routes: RoutesConfig = {
-    [`POST ${PAID_ROUTE_PATH}`]: {
+    [`POST ${PRO_SUBSCRIBE_ROUTE}`]: {
       price: {
         amount: env.X402_PRICE_AMOUNT,
         asset: {
@@ -33,7 +33,7 @@ export function registerX402Routes(app: Express, env: Env) {
 
   app.use(paymentMiddleware(env.X402_PAY_TO as SolanaAddress, routes, facilitator));
 
-  app.post(PAID_ROUTE_PATH, (_req, res) => {
-    res.json({ ok: true, resource: 'Paid Solana-protected content' });
+  app.post(PRO_SUBSCRIBE_ROUTE, (_req, res) => {
+    res.json({ ok: true, resource: 'Pro subscription activated (test stub)' });
   });
 }

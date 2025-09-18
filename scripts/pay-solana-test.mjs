@@ -3,7 +3,6 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import fs from 'fs';
 import { config as loadEnv } from 'dotenv';
-import { x402Version } from 'x402';
 import { createPaymentHeader, selectPaymentRequirements } from 'x402/client';
 import {
   createSigner,
@@ -26,8 +25,8 @@ if (!PRIVATE_KEY) {
 }
 
 const API_BASE = process.env.X402_TEST_API_BASE ?? 'https://api.dexter.cash';
-const PAID_ROUTE = '/paid/test';
-const endpoint = new URL(PAID_ROUTE, API_BASE).toString();
+const SUBSCRIBE_ROUTE = '/pro/subscribe';
+const endpoint = new URL(SUBSCRIBE_ROUTE, API_BASE).toString();
 
 async function requestWithoutPayment() {
   const res = await fetch(endpoint, {
@@ -72,7 +71,7 @@ async function main() {
   }
 
   console.log('Creating payment header...');
-  const header = await createPaymentHeader(signer, body.x402Version ?? x402Version, paymentRequirements);
+  const header = await createPaymentHeader(signer, body.x402Version ?? 1, paymentRequirements);
 
   console.log('Retrying request with X-PAYMENT header...');
   const payoff = await fetch(endpoint, {
@@ -92,7 +91,7 @@ async function main() {
   }
 
   const json = await payoff.json();
-  console.log('Paid endpoint responded:', json);
+  console.log('Subscription endpoint responded:', json);
 
   if (settlementHeader) {
     const settlement = settleResponseFromHeader(settlementHeader);

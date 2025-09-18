@@ -11,6 +11,7 @@ const DEFAULT_ALLOWED_REDIRECTS = [
 
 const DEFAULT_ALLOWED_CLIENT_IDS = [
   'cid_59e99d1247b444bca4631382ecff3e36', // Claude connector
+  'cid_a859560609a6448aa2f3a1c29f6ab496', // ChatGPT connector
 ];
 
 const allowedRedirects = (() => {

@@ -124,15 +124,26 @@ export function registerConnectorOAuthRoutes(app: Express) {
 
     console.log('[connector/oauth/authorize] issued request', { requestId, clientId, redirect_uri: redirectUri, scope });
 
-    return res.json({
+    const loginUrl = redirect.toString();
+    const accepts = (req.headers['accept'] || req.headers['Accept'] || '') as string;
+    const responseMode = typeof req.query.response_mode === 'string' ? req.query.response_mode.toLowerCase() : '';
+    const preferJson = responseMode === 'json' || (accepts && accepts.includes('application/json'));
+
+    const payload = {
       ok: true,
       request_id: requestId,
-      login_url: redirect.toString(),
+      login_url: loginUrl,
       client_id: clientId,
       redirect_uri: redirectUri,
       state,
       scope,
-    });
+    };
+
+    if (preferJson) {
+      return res.json(payload);
+    }
+
+    return res.redirect(302, loginUrl);
   });
 
   app.get('/api/connector/oauth/request', (req: Request, res: Response) => {

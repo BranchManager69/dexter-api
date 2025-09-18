@@ -8,9 +8,10 @@ function preloadParentEnv() {
   try {
     const cwd = process.cwd();
     const candidates = [
-      path.resolve(cwd, '../../.env'),  // repo root
-      path.resolve(cwd, '../.env'),     // alpha/.env (if present)
-      path.resolve(cwd, '.env'),        // service-local .env
+      path.resolve(cwd, '../dexter-ops/.env'), // shared ops repo env
+      path.resolve(cwd, '../../.env'),        // legacy repo root
+      path.resolve(cwd, '../.env'),           // legacy alpha/.env
+      path.resolve(cwd, '.env'),              // service-local .env
     ];
     const needed = new Set([
       'OPENAI_API_KEY',

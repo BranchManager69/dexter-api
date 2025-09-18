@@ -39,6 +39,119 @@ const allowedClientIds = (() => {
   return set;
 })();
 
+const mobileRedirectTemplatesByClientId = new Map<string, string>();
+const mobileRedirectTemplatesByRedirect = new Map<string, string>();
+const defaultPlatformByClientId = new Map<string, string>();
+
+function registerMobileRedirectTemplate(key: string, template: string) {
+  if (!key || !template) return;
+  if (/^https?:\/\//i.test(key)) {
+    const normalized = normalizeRedirectUri(key);
+    if (normalized) mobileRedirectTemplatesByRedirect.set(normalized, template);
+    return;
+  }
+  mobileRedirectTemplatesByClientId.set(key, template);
+}
+
+function registerDefaultPlatform(clientId: string, platform: string) {
+  if (clientId && platform) {
+    defaultPlatformByClientId.set(clientId, platform);
+  }
+}
+
+(function hydrateMobileRedirectTemplates() {
+  const raw = process.env.CONNECTOR_MOBILE_REDIRECTS || '';
+  for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
+    const [key, template] = entry.split('|');
+    if (!key || !template) {
+      console.warn('[connector/oauth] Ignoring CONNECTOR_MOBILE_REDIRECTS entry (expected "id|template")', entry);
+      continue;
+    }
+    registerMobileRedirectTemplate(key.trim(), template.trim());
+  }
+})();
+
+registerMobileRedirectTemplate(
+  'cid_59e99d1247b444bca4631382ecff3e36',
+  'https://claude.ai/magic-link?client={{platform}}&continue={{redirect_url_encoded}}',
+);
+registerDefaultPlatform('cid_59e99d1247b444bca4631382ecff3e36', 'ios');
+
+type RedirectTemplateContext = {
+  code: string;
+  code_encoded: string;
+  state: string;
+  state_encoded: string;
+  redirect_uri: string;
+  redirect_uri_encoded: string;
+  redirect_url: string;
+  redirect_url_encoded: string;
+  platform: string;
+  platform_encoded: string;
+};
+
+function applyRedirectTemplate(template: string, ctx: RedirectTemplateContext): string {
+  return template.replace(/{{\s*([a-z0-9_]+)\s*}}/gi, (_match, key) => {
+    const normalized = String(key || '').toLowerCase();
+    const value = (ctx as Record<string, string>)[normalized];
+    return value != null ? value : '';
+  });
+}
+
+function resolveMobileRedirectTemplate(clientId: string, redirectUri: string): string | null {
+  const direct = mobileRedirectTemplatesByClientId.get(clientId);
+  if (direct) return direct;
+  const byUri = mobileRedirectTemplatesByRedirect.get(normalizeRedirectUri(redirectUri) || redirectUri);
+  return byUri || null;
+}
+
+function buildMobileRedirectUrl(
+  clientId: string,
+  redirectUri: string,
+  redirectUrl: string,
+  code: string,
+  state: string | null,
+  platform: string | null | undefined,
+): string | null {
+  const template = resolveMobileRedirectTemplate(clientId, redirectUri);
+  if (!template) return null;
+  const platformHint = platform || defaultPlatformByClientId.get(clientId) || '';
+  const ctx: RedirectTemplateContext = {
+    code,
+    code_encoded: encodeURIComponent(code),
+    state: state || '',
+    state_encoded: encodeURIComponent(state || ''),
+    redirect_uri: redirectUri,
+    redirect_uri_encoded: encodeURIComponent(redirectUri),
+    redirect_url: redirectUrl,
+    redirect_url_encoded: encodeURIComponent(redirectUrl),
+    platform: platformHint,
+    platform_encoded: encodeURIComponent(platformHint),
+  };
+  const candidate = applyRedirectTemplate(template, ctx).trim();
+  if (!candidate) return null;
+  try {
+    // Validate format without altering non-HTTP schemes (chatgpt:// etc.).
+    const parsed = new URL(candidate);
+    return parsed.toString();
+  } catch {
+    // Allow custom schemes (e.g., claude://) by falling back to manual return when URL constructor rejects.
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)) {
+      return candidate;
+    }
+    console.warn('[connector/oauth] Ignoring mobile redirect candidate due to invalid format', { clientId, candidate });
+    return null;
+  }
+}
+
+function detectPlatformFromUserAgent(ua: string | undefined): 'ios' | 'android' | null {
+  if (!ua) return null;
+  const lowered = ua.toLowerCase();
+  if (lowered.includes('android')) return 'android';
+  if (lowered.includes('iphone') || lowered.includes('ipad') || lowered.includes('ipod')) return 'ios';
+  return null;
+}
+
 function randomToken(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(18).toString('hex')}`;
 }
@@ -239,12 +352,35 @@ export function registerConnectorOAuthRoutes(app: Express) {
 
       console.log('[connector/oauth/exchange] issued code', { codePreview: code.slice(0, 12), supabaseUserId });
 
-      return res.json({
+      const redirectUrl = new URL(requestEntry.redirect_uri);
+      redirectUrl.searchParams.set('code', code);
+      if (requestEntry.state) {
+        redirectUrl.searchParams.set('state', requestEntry.state);
+      }
+      const redirectUrlString = redirectUrl.toString();
+      const userAgent = (req.headers['user-agent'] || req.headers['User-Agent']) as string | undefined;
+      const platform = detectPlatformFromUserAgent(userAgent);
+      const mobileRedirectUrl = buildMobileRedirectUrl(
+        requestEntry.client_id,
+        requestEntry.redirect_uri,
+        redirectUrlString,
+        code,
+        requestEntry.state,
+        platform,
+      );
+
+      const payload: Record<string, unknown> = {
         ok: true,
         redirect_uri: requestEntry.redirect_uri,
+        redirect_url: redirectUrlString,
         code,
         state: requestEntry.state,
-      });
+      };
+      if (mobileRedirectUrl) {
+        payload.mobile_redirect_url = mobileRedirectUrl;
+      }
+
+      return res.json(payload);
     } catch (error: any) {
       console.error('[connector/oauth/exchange] failed', error?.message || error);
       return res.status(500).json({ ok: false, error: 'exchange_failed' });

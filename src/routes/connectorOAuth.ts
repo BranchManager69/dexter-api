@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from 'express';
 import crypto from 'node:crypto';
+import prisma from '../prisma.js';
 import { exchangeRefreshToken, getConnectorTokenTTLSeconds, getSupabaseUserFromAccessToken } from '../utils/supabaseAdmin.js';
 
 const DEFAULT_ALLOWED_REDIRECTS = [
@@ -37,33 +38,6 @@ const allowedClientIds = (() => {
   return set;
 })();
 
-type PendingAuthRequest = {
-  client_id: string;
-  redirect_uri: string;
-  state: string | null;
-  code_challenge: string | null;
-  code_challenge_method: string | null;
-  scope: string | null;
-  createdAt: number;
-};
-
-type AuthorizationCodeRecord = {
-  client_id: string;
-  redirect_uri: string;
-  state: string | null;
-  code_challenge: string | null;
-  code_challenge_method: string | null;
-  scope: string | null;
-  refresh_token: string;
-  access_token: string;
-  supabase_user_id: string | null;
-  expiresIn: number;
-  createdAt: number;
-};
-
-const pendingAuthRequests = new Map<string, PendingAuthRequest>();
-const authorizationCodes = new Map<string, AuthorizationCodeRecord>();
-
 function randomToken(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(18).toString('hex')}`;
 }
@@ -80,20 +54,15 @@ function base64UrlSha256(input: string): string {
   const hash = crypto.createHash('sha256').update(input).digest();
   return base64Url(hash);
 }
-
-function cleanupExpired() {
-  const now = Date.now();
-  const authTtl = 5 * 60 * 1000; // 5 minutes
-  const codeTtl = 5 * 60 * 1000; // 5 minutes
-  for (const [id, entry] of pendingAuthRequests.entries()) {
-    if (now - entry.createdAt > authTtl) {
-      pendingAuthRequests.delete(id);
-    }
-  }
-  for (const [code, entry] of authorizationCodes.entries()) {
-    if (now - entry.createdAt > codeTtl) {
-      authorizationCodes.delete(code);
-    }
+async function cleanupExpired() {
+  try {
+    const cutoff = new Date(Date.now() - 5 * 60 * 1000);
+    await Promise.all([
+      prisma.connector_oauth_requests.deleteMany({ where: { created_at: { lt: cutoff } } }),
+      prisma.connector_oauth_codes.deleteMany({ where: { created_at: { lt: cutoff } } }),
+    ]);
+  } catch (error) {
+    console.error('[connector/oauth] cleanup failed', (error as Error)?.message || error);
   }
 }
 
@@ -129,8 +98,8 @@ function getParam(req: Request, key: string): string {
 }
 
 export function registerConnectorOAuthRoutes(app: Express) {
-  app.get('/api/connector/oauth/authorize', (req: Request, res: Response) => {
-    cleanupExpired();
+  app.get('/api/connector/oauth/authorize', async (req: Request, res: Response) => {
+    await cleanupExpired();
 
     const clientId = typeof req.query.client_id === 'string' ? req.query.client_id.trim() : '';
     const redirectUri = normalizeRedirectUri(req.query.redirect_uri as string | undefined);
@@ -152,15 +121,22 @@ export function registerConnectorOAuthRoutes(app: Express) {
     }
 
     const requestId = randomToken('auth');
-    pendingAuthRequests.set(requestId, {
-      client_id: clientId,
-      redirect_uri: redirectUri,
-      state,
-      code_challenge: codeChallenge,
-      code_challenge_method: codeChallengeMethod,
-      scope,
-      createdAt: Date.now(),
-    });
+    try {
+      await prisma.connector_oauth_requests.create({
+        data: {
+          id: requestId,
+          client_id: clientId,
+          redirect_uri: redirectUri,
+          state,
+          code_challenge: codeChallenge,
+          code_challenge_method: codeChallengeMethod,
+          scope,
+        },
+      });
+    } catch (error) {
+      console.error('[connector/oauth/authorize] failed to persist request', (error as Error)?.message || error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
 
     const redirect = new URL('/connector/auth', resolveAppBase());
     redirect.searchParams.set('request_id', requestId);
@@ -189,12 +165,18 @@ export function registerConnectorOAuthRoutes(app: Express) {
     return res.redirect(302, loginUrl);
   });
 
-  app.get('/api/connector/oauth/request', (req: Request, res: Response) => {
+  app.get('/api/connector/oauth/request', async (req: Request, res: Response) => {
     const requestId = typeof req.query.request_id === 'string' ? req.query.request_id : '';
     if (!requestId) {
       return res.status(400).json({ ok: false, error: 'missing_request_id' });
     }
-    const entry = pendingAuthRequests.get(requestId);
+    let entry;
+    try {
+      entry = await prisma.connector_oauth_requests.findUnique({ where: { id: requestId } });
+    } catch (error) {
+      console.error('[connector/oauth/request] lookup failed', (error as Error)?.message || error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
     if (!entry) {
       return res.status(404).json({ ok: false, error: 'request_not_found' });
     }
@@ -207,7 +189,7 @@ export function registerConnectorOAuthRoutes(app: Express) {
   });
 
   app.post('/api/connector/oauth/exchange', async (req: Request, res: Response) => {
-    cleanupExpired();
+    await cleanupExpired();
 
     const requestId = getParam(req, 'request_id').trim();
     const refreshToken = getParam(req, 'refresh_token').trim();
@@ -216,7 +198,13 @@ export function registerConnectorOAuthRoutes(app: Express) {
       return res.status(400).json({ ok: false, error: 'invalid_request' });
     }
 
-    const requestEntry = pendingAuthRequests.get(requestId);
+    let requestEntry;
+    try {
+      requestEntry = await prisma.connector_oauth_requests.findUnique({ where: { id: requestId } });
+    } catch (error) {
+      console.error('[connector/oauth/exchange] lookup failed', (error as Error)?.message || error);
+      return res.status(500).json({ ok: false, error: 'internal_error' });
+    }
     if (!requestEntry) {
       return res.status(404).json({ ok: false, error: 'request_not_found' });
     }
@@ -229,21 +217,24 @@ export function registerConnectorOAuthRoutes(app: Express) {
       const expiresIn = supSession.expires_in || getConnectorTokenTTLSeconds();
 
       const code = randomToken('code');
-      authorizationCodes.set(code, {
-        client_id: requestEntry.client_id,
-        redirect_uri: requestEntry.redirect_uri,
-        state: requestEntry.state,
-        code_challenge: requestEntry.code_challenge,
-        code_challenge_method: requestEntry.code_challenge_method,
-        scope: requestEntry.scope,
-        refresh_token: nextRefreshToken,
-        access_token: accessToken,
-        supabase_user_id: supabaseUserId,
-        expiresIn,
-        createdAt: Date.now(),
+      await prisma.$transaction(async (tx) => {
+        await tx.connector_oauth_requests.delete({ where: { id: requestId } });
+        await tx.connector_oauth_codes.create({
+          data: {
+            code,
+            client_id: requestEntry.client_id,
+            redirect_uri: requestEntry.redirect_uri,
+            state: requestEntry.state,
+            code_challenge: requestEntry.code_challenge,
+            code_challenge_method: requestEntry.code_challenge_method,
+            scope: requestEntry.scope,
+            refresh_token: nextRefreshToken,
+            access_token: accessToken,
+            supabase_user_id: supabaseUserId,
+            expires_in: expiresIn,
+          },
+        });
       });
-
-      pendingAuthRequests.delete(requestId);
 
       console.log('[connector/oauth/exchange] issued code', { codePreview: code.slice(0, 12), supabaseUserId });
 
@@ -260,7 +251,7 @@ export function registerConnectorOAuthRoutes(app: Express) {
   });
 
   app.post('/api/connector/oauth/token', async (req: Request, res: Response) => {
-    cleanupExpired();
+    await cleanupExpired();
 
     const grantType = getParam(req, 'grant_type').trim();
 
@@ -268,12 +259,16 @@ export function registerConnectorOAuthRoutes(app: Express) {
       const code = getParam(req, 'code').trim();
       if (!code) return res.status(400).json({ error: 'invalid_request' });
 
-      const record = authorizationCodes.get(code);
+      let record;
+      try {
+        record = await prisma.connector_oauth_codes.findUnique({ where: { code } });
+      } catch (error) {
+        console.error('[connector/oauth/token] lookup failed', (error as Error)?.message || error);
+        return res.status(500).json({ error: 'invalid_grant' });
+      }
       if (!record) {
         return res.status(400).json({ error: 'invalid_grant' });
       }
-
-      authorizationCodes.delete(code);
 
       if (record.code_challenge) {
         const verifier = getParam(req, 'code_verifier').trim();
@@ -286,11 +281,12 @@ export function registerConnectorOAuthRoutes(app: Express) {
       }
 
       try {
+        await prisma.connector_oauth_codes.delete({ where: { code } });
         const refreshed = await exchangeRefreshToken(record.refresh_token);
         const accessToken = refreshed.access_token;
         const refreshToken = refreshed.refresh_token || record.refresh_token;
         const supabaseUserId = refreshed.user?.id || record.supabase_user_id;
-        const expiresIn = refreshed.expires_in || record.expiresIn;
+        const expiresIn = refreshed.expires_in || record.expires_in || getConnectorTokenTTLSeconds();
 
         return res.json({
           token_type: 'bearer',

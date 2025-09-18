@@ -186,6 +186,40 @@ model ai_user_settings {
   @@map("ai_user_settings")
 }
 
+/// Pending OAuth authorization requests for MCP connector flow
+model connector_oauth_requests {
+  id                    String   @id @db.VarChar(64)
+  client_id             String   @db.VarChar(255)
+  redirect_uri          String   @db.Text
+  state                 String?  @db.Text
+  code_challenge        String?  @db.VarChar(512)
+  code_challenge_method String?  @db.VarChar(32)
+  scope                 String?  @db.Text
+  created_at            DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([created_at])
+  @@map("connector_oauth_requests")
+}
+
+/// Stored authorization codes / refresh material so restarts do not drop connector sessions
+model connector_oauth_codes {
+  code                 String   @id @db.VarChar(128)
+  client_id            String   @db.VarChar(255)
+  redirect_uri         String   @db.Text
+  state                String?  @db.Text
+  code_challenge       String?  @db.VarChar(512)
+  code_challenge_method String? @db.VarChar(32)
+  scope                String?  @db.Text
+  refresh_token        String   @db.Text
+  access_token         String   @db.Text
+  supabase_user_id     String?  @db.VarChar(255)
+  expires_in           Int?
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([created_at])
+  @@map("connector_oauth_codes")
+}
+
 /// Friendly aliases per user for managed wallets (e.g., "trading", "treasury")
 model ai_wallet_aliases {
   id         String   @id @default(uuid())

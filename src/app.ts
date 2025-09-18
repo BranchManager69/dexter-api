@@ -17,6 +17,69 @@ export const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({ limit: '2mb' }));
 
+const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
+
+function mergeContentSecurityPolicy(existing: undefined | string | string[] | number): string {
+  const normalizeExisting = (): string => {
+    if (Array.isArray(existing)) return existing.join('; ');
+    if (typeof existing === 'number') return existing.toString();
+    return existing ? String(existing) : '';
+  };
+
+  const raw = normalizeExisting();
+  const directives = new Map<string, string[]>();
+  const order: string[] = [];
+
+  const registerDirective = (name: string, values: string[]) => {
+    const lower = name.toLowerCase();
+    directives.set(lower, values);
+    if (!order.includes(lower)) order.push(lower);
+  };
+
+  if (raw) {
+    for (const chunk of raw.split(';')) {
+      const trimmed = chunk.trim();
+      if (!trimmed) continue;
+      const [name, ...values] = trimmed.split(/\s+/);
+      if (!name) continue;
+      registerDirective(name, values);
+    }
+  }
+
+  const ensureDirective = (name: string, defaults: string[]) => {
+    const lower = name.toLowerCase();
+    if (!directives.has(lower)) {
+      registerDirective(lower, [...defaults]);
+    }
+  };
+
+  const addValues = (name: string, additions: Iterable<string>) => {
+    const lower = name.toLowerCase();
+    const current = directives.get(lower) ?? [];
+    const unique = new Set(current);
+    for (const value of additions) {
+      if (!value) continue;
+      unique.add(value);
+    }
+    directives.set(lower, Array.from(unique));
+  };
+
+  ensureDirective('script-src', ["'self'", "'unsafe-inline'", "'unsafe-eval'"]); // keep parity with prior policy
+  ensureDirective('script-src-elem', directives.get('script-src') ?? ["'self'", "'unsafe-inline'", "'unsafe-eval'"]);
+  ensureDirective('frame-src', ["'self'"]);
+
+  addValues('script-src', [TURNSTILE_ORIGIN]);
+  addValues('script-src-elem', [TURNSTILE_ORIGIN]);
+  addValues('frame-src', [TURNSTILE_ORIGIN]);
+
+  return order
+    .map((name) => {
+      const values = directives.get(name) ?? [];
+      return values.length ? `${name} ${values.join(' ')}` : name;
+    })
+    .join('; ');
+}
+
 // Basic CORS
 app.use((req, res, next) => {
   const origin = req.headers.origin || '*';
@@ -29,6 +92,13 @@ app.use((req, res, next) => {
   }
   res.setHeader('Access-Control-Expose-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') return res.sendStatus(204);
+  next();
+});
+
+// Ensure Turnstile challenge assets are permitted by CSP
+app.use((_req, res, next) => {
+  const merged = mergeContentSecurityPolicy(res.getHeader('Content-Security-Policy'));
+  res.setHeader('Content-Security-Policy', merged);
   next();
 });
 

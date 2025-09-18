@@ -19,7 +19,7 @@ This document captures how we'll introduce Coinbase's x402 protocol across the D
 ## High-Level Flow
 1. Client (human UI or agent) requests a paid endpoint on `dexter-api`.
 2. Middleware detects a missing `X-PAYMENT` header → responds `402 Payment Required` with a JSON `accepts` array (price, SPL token mint, network, facilitator URL).
-3. Client calls the facilitator's `/settle` (or helper) with the requirement. Facilitator signs and submits the transfer on Solana (devnet for tests, mainnet in production) and returns a payload plus receipt metadata.
+3. Client calls the facilitator's `/settle` (or helper) with the requirement. Facilitator signs and submits the transfer on Solana mainnet and returns a payload plus receipt metadata.
 4. Client retries the original request with `X-PAYMENT: <base64 payload>`.
 5. Middleware verifies the payload (locally or via facilitator `/verify`), settles if needed, and serves the response. Optional `X-PAYMENT-RESPONSE` header surfaces transaction signatures for auditing.
 
@@ -49,6 +49,6 @@ This document captures how we'll introduce Coinbase's x402 protocol across the D
 - Compliance stance per jurisdiction (e.g., MTL requirements) – tracked in `dexter-ops`.
 
 ## Next Steps
-- Fund a Solana fee payer wallet (devnet now, mainnet later) and drop the base58 secret into `x402-facilitator/.env`.
+- Fund a Solana fee payer wallet and drop the base58 secret into `x402-facilitator/.env`.
 - Wire the `x402` middleware skeleton in `dexter-api`, pointing at the facilitator's URL.
 - Implement the agent-side helper so MCP tools can complete the 402 → pay → retry loop automatically.

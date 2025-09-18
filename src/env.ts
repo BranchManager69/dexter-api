@@ -22,25 +22,39 @@ function preloadParentEnv() {
       'SUPABASE_ANON_KEY',
       'SUPABASE_SERVICE_ROLE_KEY',
       'SUPABASE_JWT_SECRET',
+      'DATABASE_URL',
     ]);
     for (const p of candidates) {
-      if (fs.existsSync(p)) {
-        const parsed = dotenv.parse(fs.readFileSync(p));
-        for (const key of needed) {
-          const cur = process.env[key];
-          const val = parsed[key];
-          if ((!cur || cur === '') && val && val !== '') {
-            process.env[key] = val;
-          }
+      if (!fs.existsSync(p)) continue;
+      const parsed = dotenv.parse(fs.readFileSync(p));
+      for (const key of Array.from(needed)) {
+        const current = process.env[key];
+        const value = parsed[key];
+        if ((!current || current === '') && value && value !== '') {
+          process.env[key] = value;
+          needed.delete(key);
         }
-        // Stop after first file that provides OPENAI_API_KEY
-        if (process.env.OPENAI_API_KEY) break;
       }
+      if (!needed.size) break;
+    }
+    if (needed.size) {
+      try {
+        console.warn('[env] preload missing values for', Array.from(needed).join(', '));
+      } catch {}
     }
   } catch {}
 }
 
 preloadParentEnv();
+
+try {
+  const dbUrl = process.env.DATABASE_URL || '';
+  if (dbUrl && /pooler\.supabase\.com/.test(dbUrl) && !/pgbouncer=true/i.test(dbUrl)) {
+    const connector = dbUrl.includes('?') ? '&' : '?';
+    const extras = 'pgbouncer=true&connection_limit=1';
+    process.env.DATABASE_URL = `${dbUrl}${connector}${extras}`;
+  }
+} catch {}
 
 const envSchema = z.object({
   // Optional at boot; /realtime/session will error if missing

@@ -2,6 +2,41 @@ import type { Express, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import { exchangeRefreshToken, getConnectorTokenTTLSeconds, getSupabaseUserFromAccessToken } from '../utils/supabaseAdmin.js';
 
+const DEFAULT_ALLOWED_REDIRECTS = [
+  'https://claude.ai/api/mcp/auth_callback',
+  'https://chatgpt.com/connector_platform_oauth_redirect',
+  'https://chat.openai.com/connector_platform_oauth_redirect',
+];
+
+const DEFAULT_ALLOWED_CLIENT_IDS = [
+  'cid_59e99d1247b444bca4631382ecff3e36', // Claude connector
+];
+
+const allowedRedirects = (() => {
+  const extras = (process.env.CONNECTOR_ALLOWED_REDIRECTS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const set = new Set<string>();
+  for (const value of [...DEFAULT_ALLOWED_REDIRECTS, ...extras]) {
+    const normalized = normalizeRedirectUri(value);
+    if (normalized) set.add(normalized);
+  }
+  return set;
+})();
+
+const allowedClientIds = (() => {
+  const extras = (process.env.CONNECTOR_ALLOWED_CLIENT_IDS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const set = new Set<string>();
+  for (const value of [...DEFAULT_ALLOWED_CLIENT_IDS, ...extras]) {
+    if (value) set.add(value);
+  }
+  return set;
+})();
+
 type PendingAuthRequest = {
   client_id: string;
   redirect_uri: string;
@@ -106,6 +141,14 @@ export function registerConnectorOAuthRoutes(app: Express) {
 
     if (!clientId || !redirectUri) {
       return res.status(400).json({ ok: false, error: 'invalid_request', message: 'client_id and redirect_uri are required' });
+    }
+
+    if (allowedClientIds.size && !allowedClientIds.has(clientId)) {
+      return res.status(400).json({ ok: false, error: 'unauthorized_client', message: 'client_id not allowed' });
+    }
+
+    if (!allowedRedirects.has(redirectUri)) {
+      return res.status(400).json({ ok: false, error: 'invalid_redirect', message: 'redirect_uri not allowed' });
     }
 
     const requestId = randomToken('auth');

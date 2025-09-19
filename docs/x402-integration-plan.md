@@ -36,6 +36,76 @@ This document captures how we'll introduce Coinbase's x402 protocol across the D
    - Add a placeholder `x402Client.ts` in `dexter-mcp` that can parse the `402` body, call the facilitator, and replay the request. This will evolve once the facilitator is live.
 4. **Documentation & Ops**
    - Extend `dexter-ops` README with Solana key rotation, balance monitoring, and incident response steps.
+   - Capture the paid-subscription workflow (see “Pro Subscription Flow” below) so new engineers can reproduce the setup.
+
+### Pro Subscription Flow (Status: live)
+
+The first monetised route is `POST /pro/subscribe` in `dexter-api`. It relies on the x402 middleware plus a new Prisma model `user_subscriptions` to persist access tiers.
+
+**Runtime flow**
+
+1. Client hits `/pro/subscribe`.
+2. Middleware issues a 402 challenge unless an `X-PAYMENT` header is present.
+3. Client settles the challenge through the facilitator (Solana mainnet) and retries with `X-PAYMENT`.
+4. Route handler:
+   - Requires a Supabase bearer token (we gate by Supabase auth).
+   - Decodes the x402 payload with `decodePayment`.
+   - Computes a new 30-day billing window and returns `{ tier: 'pro', status: 'active' }`.
+   - On success, reads the settlement header, extracts the Solana signature, and `upsert`s a row in `user_subscriptions` with:
+     - `supabase_user_id`
+     - `tier` (`'pro'`)
+     - `status` (`'active'`)
+     - `current_period_end`
+     - `last_payment_at`
+     - `last_payment_reference` (Solana tx hash)
+     - `payment_payload` (raw decoded x402 payload)
+
+**Database artefacts**
+
+- Table: `user_subscriptions` (see migration `20250928_add_user_subscriptions`).
+- Index: `user_subscriptions_supabase_user_id_idx`.
+- Prisma migration history `_prisma_migrations` includes the checksum `c08ed6ff7ae6ff2cb6637d2432a8f20b7cec726f66af00baabbceab6d09e9d3b`.
+
+**Applying schema changes**
+
+The canonical migration lives under `prisma/migrations/20250928_add_user_subscriptions/`. If the Prisma CLI stalls (Supabase PG bouncer can be finicky), run the SQL manually:
+
+```bash
+set +H
+psql 'postgresql://postgres.qdgumpoqnthrjfmqziwm:clanN!ck1003!@aws-1-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require' <<'SQL'
+CREATE TABLE IF NOT EXISTS "user_subscriptions" (
+  "id" UUID PRIMARY KEY,
+  "supabase_user_id" VARCHAR(255) NOT NULL UNIQUE,
+  "tier" VARCHAR(32) NOT NULL DEFAULT 'free',
+  "status" VARCHAR(32) NOT NULL DEFAULT 'inactive',
+  "current_period_end" TIMESTAMPTZ,
+  "last_payment_at" TIMESTAMPTZ,
+  "last_payment_reference" TEXT,
+  "payment_payload" JSONB DEFAULT '{}'::jsonb,
+  "created_at" TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  "updated_at" TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS "user_subscriptions_supabase_user_id_idx"
+  ON "user_subscriptions" ("supabase_user_id");
+SQL
+```
+
+Then insert the migration record so Prisma stays in sync:
+
+```bash
+set +H
+psql 'postgresql://postgres.qdgumpoqnthrjfmqziwm:clanN!ck1003!@aws-1-us-east-1.pooler.supabase.com:6543/postgres?sslmode=require' \
+  -c "INSERT INTO _prisma_migrations (checksum, finished_at, migration_name, logs, rolled_back_at, applied_steps_count)
+      VALUES ('c08ed6ff7ae6ff2cb6637d2432a8f20b7cec726f66af00baabbceab6d09e9d3b', now(), '20250928_add_user_subscriptions', '', NULL, 1)
+      ON CONFLICT (migration_name) DO NOTHING;"
+```
+
+**Next integration steps**
+
+- Read `user_subscriptions` inside the agent/tool builders to gate premium tools.
+- Create an admin panel in `dexter-fe` for viewing and toggling subscription status.
+- Add a reconciliation job that expires `status` when `current_period_end` passes.
 
 ## Phase 1 – Production Readiness
 - Multi-tenant pricing support (per workspace or per API key).

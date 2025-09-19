@@ -38,3 +38,4 @@ npm test
 ## Notes
 - Uses `@openai/agents` hosted MCP tools to avoid duplicating tool code.
 - Ephemeral token endpoint hits `POST https://api.openai.com/v1/realtime/sessions`.
+- Paid access: `POST /pro/subscribe` is gated by Coinbase x402. Successful payments are recorded in `user_subscriptions` (Supabase Postgres) and enable `tier: pro` tooling once the gating layer hooks in. See `docs/x402-integration-plan.md` for the full subscription flow.

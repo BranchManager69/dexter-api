@@ -3,6 +3,9 @@ import express from 'express';
 import { loadEnv } from './env.js';
 import { Agent, hostedMcpTool, Runner } from '@openai/agents-core';
 import { OpenAIProvider, setDefaultOpenAIKey } from '@openai/agents-openai';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { chatStreamHandler } from './chatStream.js';
 import { buildSpecialistAgents } from './agents.js';
 import { createRealtimeSessionWithEnv } from './realtime.js';
@@ -170,16 +173,27 @@ app.get('/mcp/health', async (_req, res) => {
 
 // MCP tools passthrough
 app.get('/tools', async (_req, res) => {
+  let transport: StreamableHTTPClientTransport | null = null;
+  let client: Client | null = null;
   try {
-    const base = env.MCP_URL.replace(/\/$/, '');
-    const upstream = `${base}/tools`;
-    const r = await fetch(upstream, {
-      headers: env.TOKEN_AI_MCP_TOKEN ? { Authorization: `Bearer ${env.TOKEN_AI_MCP_TOKEN}` } : {},
+    const baseUrl = new URL(env.MCP_URL);
+    client = new Client({ name: 'dexter-api-tools-proxy', version: '1.0.0' });
+    transport = new StreamableHTTPClientTransport(baseUrl, {
+      headers: env.TOKEN_AI_MCP_TOKEN ? { Authorization: `Bearer ${env.TOKEN_AI_MCP_TOKEN}` } : undefined,
+      fetch,
     });
-    const text = await r.text();
-    res.status(r.status).type(r.headers.get('content-type') || 'application/json').send(text);
+    await client.connect(transport);
+    const result = await client.request({ method: 'tools/list', params: {} }, ListToolsResultSchema);
+    res.json({ tools: result.tools });
   } catch (e: any) {
     res.status(502).json({ ok: false, error: e?.message || String(e) });
+  } finally {
+    try {
+      await transport?.close();
+    } catch {}
+    try {
+      await client?.close();
+    } catch {}
   }
 });
 

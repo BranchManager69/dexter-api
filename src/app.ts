@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import type { Request, Response } from 'express';
 import { loadEnv } from './env.js';
 import { Agent, hostedMcpTool, Runner } from '@openai/agents-core';
 import { OpenAIProvider, setDefaultOpenAIKey } from '@openai/agents-openai';
@@ -172,16 +173,22 @@ app.get('/mcp/health', async (_req, res) => {
 });
 
 // MCP tools passthrough
-const handleToolsListing = async (_req, res) => {
+const handleToolsListing = async (_req: Request, res: Response) => {
   let transport: StreamableHTTPClientTransport | null = null;
   let client: Client | null = null;
   try {
     console.log('[mcp-tools] listing tools via MCP server');
     const baseUrl = new URL(env.MCP_URL);
+    const authFetch = async (input: any, init: any = {}) => {
+      const headers = new Headers(init.headers || {});
+      if (env.TOKEN_AI_MCP_TOKEN) {
+        headers.set('Authorization', `Bearer ${env.TOKEN_AI_MCP_TOKEN}`);
+      }
+      return fetch(input, { ...init, headers });
+    };
     client = new Client({ name: 'dexter-api-tools-proxy', version: '1.0.0' });
     transport = new StreamableHTTPClientTransport(baseUrl, {
-      headers: env.TOKEN_AI_MCP_TOKEN ? { Authorization: `Bearer ${env.TOKEN_AI_MCP_TOKEN}` } : undefined,
-      fetch,
+      fetch: authFetch,
     });
     await client.connect(transport);
     const result = await client.request({ method: 'tools/list', params: {} }, ListToolsResultSchema);

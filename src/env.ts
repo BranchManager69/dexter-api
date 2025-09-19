@@ -18,12 +18,20 @@ function preloadParentEnv() {
       'OPENAI_REALTIME_MODEL',
       'TEXT_MODEL',
       'MCP_URL',
+      'TOKEN_AI_MCP_TOKEN',
       'SUPABASE_URL',
       'SUPABASE_ANON_KEY',
       'SUPABASE_SERVICE_ROLE_KEY',
       'SUPABASE_JWT_SECRET',
       'DATABASE_URL',
     ]);
+    for (const key of Array.from(needed)) {
+      const current = process.env[key];
+      if (current && current !== '') {
+        needed.delete(key);
+      }
+    }
+    const filled: string[] = [];
     for (const p of candidates) {
       if (!fs.existsSync(p)) continue;
       const parsed = dotenv.parse(fs.readFileSync(p));
@@ -33,10 +41,14 @@ function preloadParentEnv() {
         if ((!current || current === '') && value && value !== '') {
           process.env[key] = value;
           needed.delete(key);
+          filled.push(key);
         }
       }
       if (!needed.size) break;
     }
+    try {
+      console.log('[env] filled from preload:', filled.join(', ') || '(none)');
+    } catch {}
     if (needed.size) {
       try {
         console.warn('[env] preload missing values for', Array.from(needed).join(', '));
@@ -46,6 +58,14 @@ function preloadParentEnv() {
 }
 
 preloadParentEnv();
+
+try {
+  const debugKeys = ['OPENAI_API_KEY', 'TOKEN_AI_MCP_TOKEN', 'DATABASE_URL'];
+  for (const key of debugKeys) {
+    const value = process.env[key] ?? '';
+    console.log(`[env] ${key} length=${value.length}`);
+  }
+} catch {}
 
 try {
   const dbUrl = process.env.DATABASE_URL || '';

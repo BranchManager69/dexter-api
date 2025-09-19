@@ -172,7 +172,7 @@ app.get('/mcp/health', async (_req, res) => {
 });
 
 // MCP tools passthrough
-const handleToolsListing = async (_req: express.Request, res: express.Response) => {
+const handleToolsListing = async (_req, res) => {
   let transport: StreamableHTTPClientTransport | null = null;
   let client: Client | null = null;
   try {

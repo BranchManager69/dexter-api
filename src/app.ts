@@ -171,7 +171,9 @@ app.get('/mcp/health', async (_req, res) => {
 // MCP tools passthrough
 app.get('/tools', async (_req, res) => {
   try {
-    const r = await fetch(new URL('/tools', env.MCP_URL).toString(), {
+    const base = env.MCP_URL.replace(/\/$/, '');
+    const upstream = `${base}/tools`;
+    const r = await fetch(upstream, {
       headers: env.TOKEN_AI_MCP_TOKEN ? { Authorization: `Bearer ${env.TOKEN_AI_MCP_TOKEN}` } : {},
     });
     const text = await r.text();

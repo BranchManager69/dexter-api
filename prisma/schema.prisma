@@ -236,6 +236,22 @@ model ai_wallet_aliases {
   @@map("ai_wallet_aliases")
 }
 
+model user_subscriptions {
+  id                   String   @id @default(uuid())
+  supabase_user_id     String   @unique @db.VarChar(255)
+  tier                 String   @default("free") @db.VarChar(32)
+  status               String   @default("inactive") @db.VarChar(32)
+  current_period_end   DateTime? @db.Timestamptz(6)
+  last_payment_at      DateTime? @db.Timestamptz(6)
+  last_payment_reference String?  @db.Text
+  payment_payload      Json?    @default("{}")
+  created_at           DateTime @default(now()) @db.Timestamptz(6)
+  updated_at           DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([supabase_user_id])
+  @@map("user_subscriptions")
+}
+
 /// Append-only trade audit for AI-triggered actions
 model ai_trade_audit {
   id          BigInt    @id @default(autoincrement())

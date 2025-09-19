@@ -71,12 +71,6 @@ function registerDefaultPlatform(clientId: string, platform: string) {
   }
 })();
 
-registerMobileRedirectTemplate(
-  'cid_59e99d1247b444bca4631382ecff3e36',
-  'https://claude.ai/magic-link?client={{platform}}&continue={{redirect_url_encoded}}',
-);
-registerDefaultPlatform('cid_59e99d1247b444bca4631382ecff3e36', 'ios');
-
 type RedirectTemplateContext = {
   code: string;
   code_encoded: string;

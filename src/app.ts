@@ -179,16 +179,12 @@ const handleToolsListing = async (_req: Request, res: Response) => {
   try {
     console.log('[mcp-tools] listing tools via MCP server');
     const baseUrl = new URL(env.MCP_URL);
-    const authFetch = async (input: any, init: any = {}) => {
-      const headers = new Headers(init.headers || {});
-      if (env.TOKEN_AI_MCP_TOKEN) {
-        headers.set('Authorization', `Bearer ${env.TOKEN_AI_MCP_TOKEN}`);
-      }
-      return fetch(input, { ...init, headers });
-    };
     client = new Client({ name: 'dexter-api-tools-proxy', version: '1.0.0' });
     transport = new StreamableHTTPClientTransport(baseUrl, {
-      fetch: authFetch,
+      fetch,
+      requestInit: env.TOKEN_AI_MCP_TOKEN
+        ? { headers: { Authorization: `Bearer ${env.TOKEN_AI_MCP_TOKEN}` } }
+        : undefined,
     });
     await client.connect(transport);
     const result = await client.request({ method: 'tools/list', params: {} }, ListToolsResultSchema);

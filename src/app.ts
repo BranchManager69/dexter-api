@@ -176,6 +176,7 @@ app.get('/tools', async (_req, res) => {
   let transport: StreamableHTTPClientTransport | null = null;
   let client: Client | null = null;
   try {
+    console.log('[mcp-tools] listing tools via MCP server');
     const baseUrl = new URL(env.MCP_URL);
     client = new Client({ name: 'dexter-api-tools-proxy', version: '1.0.0' });
     transport = new StreamableHTTPClientTransport(baseUrl, {
@@ -184,8 +185,10 @@ app.get('/tools', async (_req, res) => {
     });
     await client.connect(transport);
     const result = await client.request({ method: 'tools/list', params: {} }, ListToolsResultSchema);
+    console.log('[mcp-tools] returning', result.tools.length, 'tools');
     res.json({ tools: result.tools });
   } catch (e: any) {
+    console.error('[mcp-tools] failed', e);
     res.status(502).json({ ok: false, error: e?.message || String(e) });
   } finally {
     try {

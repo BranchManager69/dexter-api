@@ -172,7 +172,7 @@ app.get('/mcp/health', async (_req, res) => {
 });
 
 // MCP tools passthrough
-app.get('/tools', async (_req, res) => {
+const handleToolsListing = async (_req: express.Request, res: express.Response) => {
   let transport: StreamableHTTPClientTransport | null = null;
   let client: Client | null = null;
   try {
@@ -198,7 +198,10 @@ app.get('/tools', async (_req, res) => {
       await client?.close();
     } catch {}
   }
-});
+};
+
+app.get('/tools', handleToolsListing);
+app.get('/api/tools', handleToolsListing);
 
 registerAuthConfigRoute(app);
 registerWalletRoutes(app);

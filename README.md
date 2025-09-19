@@ -29,6 +29,19 @@ Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billi
 - **Coinbase x402 gating** – `POST /pro/subscribe` settles Solana payments, persists the subscription in Postgres, and marks users as `tier: pro`.
 - **Docs-ready** – long-form guides live in `docs/` (GitBook build); the README stays high-signal for day-to-day development.
 
+## Preview
+
+<p align="center">
+  <video src="https://docs.dexter.cash/previews/dexter-beta.webm"
+         poster="https://docs.dexter.cash/previews/dexter-beta.png"
+         width="960"
+         autoplay
+         loop
+         muted
+         playsinline>
+  </video>
+</p>
+
 ## Dexter Stack
 
 | Repo | Role |

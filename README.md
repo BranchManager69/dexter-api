@@ -1,10 +1,26 @@
-# Dexter API
+<p align="center">
+  <img src="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0ODAgMTYwIiBmaWxsPSJub25lIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZ3JhZCIgeDE9IjAiIHkxPSIwIiB4Mj0iMSIgeTI9IjEiPgogICAgICA8c3RvcCBvZmZzZXQ9IjAiIHN0b3AtY29sb3I9IiMwZjE3MmEiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxIiBzdG9wLWNvbG9yPSIjMWUyOTNiIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB4PSIxMiIgeT0iMTIiIHdpZHRoPSI0NTYiIGhlaWdodD0iMTM2IiByeD0iMjQiIGZpbGw9InVybCgjZ3JhZCkiIHN0cm9rZT0iIzMzNDE1NSIgc3Ryb2tlLXdpZHRoPSIyIi8+CiAgPHJlY3QgeD0iMjIiIHk9IjIyIiB3aWR0aD0iNDM2IiBoZWlnaHQ9IjExNiIgcng9IjE4IiBzdHJva2U9IiM0NzU1NjkiIHN0cm9rZS1vcGFjaXR5PSIwLjQ1IiBzdHJva2Utd2lkdGg9IjIiLz4KICA8dGV4dCB4PSI1MCUiIHk9Ijc0IiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjZTBmMmZlIiBmb250LWZhbWlseT0iJ1NGIFBybyBEaXNwbGF5JywnU2Vnb2UgVUknLHNhbnMtc2VyaWYiIGZvbnQtc2l6ZT0iNDgiIGZvbnQtd2VpZ2h0PSI2MDAiIGxldHRlci1zcGFjaW5nPSI0Ij5ERVhURVI8L3RleHQ+CiAgPHRleHQgeD0iNTAlIiB5PSIxMTYiIHRleHQtYW5jaG9yPSJtaWRkbGUiIGZpbGw9IiMzOGJkZjgiIGZvbnQtZmFtaWx5PSInU0YgTW9ubycsJ0pldEJyYWlucyBNb25vJywnRmlyYSBDb2RlJyxtb25vc3BhY2UiIGZvbnQtc2l6ZT0iMjgiIGxldHRlci1zcGFjaW5nPSIxMCI+U1RBQ0s8L3RleHQ+Cjwvc3ZnPgo=" alt="Dexter Stack wordmark" width="360">
+</p>
 
-[![Node.js](https://img.shields.io/badge/node-%3E=20-43853d.svg?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](#)
-[![OpenAI Agents](https://img.shields.io/badge/openai-agents-blue.svg)](https://github.com/openai/openai-agents-js)
+<p align="center">
+  <strong>Dexter API</strong>
+  · <a href="https://github.com/BranchManager69/dexter-fe">Dexter FE</a>
+  · <a href="https://github.com/BranchManager69/dexter-mcp">Dexter MCP</a>
+  · <a href="https://github.com/BranchManager69/dexter-ops">Dexter Ops</a>
+  · <a href="https://github.com/BranchManager69/pumpstreams">PumpStreams</a>
+</p>
+
+<h1 align="center">Dexter API</h1>
+
+<p align="center">
+  <a href="https://img.shields.io/badge/node-%3E=20-43853d.svg?logo=node.js&logoColor=white"><img src="https://img.shields.io/badge/node-%3E=20-43853d.svg?logo=node.js&logoColor=white" alt="Node.js >=20"></a>
+  <a href="#"><img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha"></a>
+  <a href="https://github.com/openai/openai-agents-js"><img src="https://img.shields.io/badge/openai-agents-blue.svg" alt="OpenAI Agents"></a>
+</p>
 
 Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billing into a single TypeScript service. It powers the Dexter browser clients by minting ephemeral realtime tokens, proxying Model Context Protocol tooling, and wiring Supabase identity into wallets and pro tiers.
+
+---
 
 ## Highlights
 - **Hosted MCP + Agents** – builds specialist agents on top of `@openai/agents` and forwards MCP tool traffic so we never duplicate tool code.
@@ -12,6 +28,15 @@ Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billi
 - **Supabase-backed auth glue** – surfaces `/auth/config`, wallet resolution, and connector OAuth flows that plug directly into the Supabase project.
 - **Coinbase x402 gating** – `POST /pro/subscribe` settles Solana payments, persists the subscription in Postgres, and marks users as `tier: pro`.
 - **Docs-ready** – long-form guides live in `docs/` (GitBook build); the README stays high-signal for day-to-day development.
+
+## Dexter Stack
+
+| Repo | Role |
+|------|------|
+| [`dexter-fe`](https://github.com/BranchManager69/dexter-fe) | Next.js client for realtime voice + chat |
+| [`dexter-mcp`](https://github.com/BranchManager69/dexter-mcp) | Hosted MCP transport powering tool access |
+| [`dexter-ops`](https://github.com/BranchManager69/dexter-ops) | Shared operations scripts, PM2 config, nginx templates |
+| [`pumpstreams`](https://github.com/BranchManager69/pumpstreams) | Pump.fun reconnaissance & analytics (adjacent tooling) |
 
 ## Quick Start
 1. Install dependencies and copy the local env template:

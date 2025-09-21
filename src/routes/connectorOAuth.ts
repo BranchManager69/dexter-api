@@ -7,12 +7,17 @@ const DEFAULT_ALLOWED_REDIRECTS = [
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector_platform_oauth_redirect',
   'https://chat.openai.com/connector_platform_oauth_redirect',
+  'https://dexter.cash/mcp/callback',
+  'https://mcp.dexter.cash/callback',
+  'https://branch.bet/mcp/callback',
+  'https://branch.bet/callback',
 ];
 
 const DEFAULT_ALLOWED_CLIENT_IDS = [
-  'cid_59e99d1247b444bca4631382ecff3e36', // Claude connector
-  'cid_a859560609a6448aa2f3a1c29f6ab496', // ChatGPT connector
-];
+  process.env.CONNECTOR_CLAUDE_CLIENT_ID || 'cid_59e99d1247b444bca4631382ecff3e36',
+  process.env.TOKEN_AI_OIDC_CLIENT_ID || 'cid_a859560609a6448aa2f3a1c29f6ab496',
+  process.env.TOKEN_AI_OIDC_CLIENT_ID_CHATGPT || '',
+].filter((value, index, array) => !!value && array.indexOf(value) === index);
 
 const allowedRedirects = (() => {
   const extras = (process.env.CONNECTOR_ALLOWED_REDIRECTS || '')
@@ -206,6 +211,22 @@ function getParam(req: Request, key: string): string {
 }
 
 export function registerConnectorOAuthRoutes(app: Express) {
+  // Structured flow logging (non-invasive). Helps correlate authorize → exchange → token.
+  const seenRequestIds: Set<string> = new Set();
+  const seenCodes: Set<string> = new Set();
+  function logFlow(event: string, props: Record<string, unknown> = {}) {
+    try {
+      const payload = {
+        ts: new Date().toISOString(),
+        event,
+        ip: (props.ip as string) || '',
+        ua: (props.ua as string) || '',
+        ...props,
+      };
+      // Single-line JSON for easy grep
+      console.log('[oauth-flow]', JSON.stringify(payload));
+    } catch {}
+  }
   app.get('/api/connector/oauth/authorize', async (req: Request, res: Response) => {
     await cleanupExpired();
 
@@ -250,6 +271,14 @@ export function registerConnectorOAuthRoutes(app: Express) {
     redirect.searchParams.set('request_id', requestId);
 
     console.log('[connector/oauth/authorize] issued request', { requestId, clientId, redirect_uri: redirectUri, scope });
+    logFlow('authorize_issued', {
+      request_id: requestId,
+      client_id: clientId,
+      redirect_uri: redirectUri,
+      scope,
+      ip: req.ip,
+      ua: req.headers['user-agent'] || req.headers['User-Agent'] || '',
+    });
 
     const loginUrl = redirect.toString();
     const accepts = (req.headers['accept'] || req.headers['Accept'] || '') as string;
@@ -318,15 +347,25 @@ export function registerConnectorOAuthRoutes(app: Express) {
     }
 
     try {
-      const supSession = await exchangeRefreshToken(refreshToken);
-      const accessToken = supSession.access_token;
-      const nextRefreshToken = supSession.refresh_token || refreshToken;
-      const supabaseUserId = supSession.user?.id || null;
-      const expiresIn = supSession.expires_in || getConnectorTokenTTLSeconds();
+      logFlow('exchange_start', {
+        request_id: requestId,
+        has_refresh_token: !!refreshToken,
+        client_id: requestEntry.client_id,
+        ip: req.ip,
+        ua: req.headers['user-agent'] || req.headers['User-Agent'] || '',
+        duplicate_request: seenRequestIds.has(requestId),
+      });
+      seenRequestIds.add(requestId);
+      // Do NOT refresh here. Store the supplied refresh_token and issue a code.
+      // Actual refresh happens once during authorization_code exchange to avoid single-use token errors.
+      const accessToken = '';
+      const nextRefreshToken = refreshToken;
+      const supabaseUserId = null;
+      const expiresIn = getConnectorTokenTTLSeconds();
 
       const code = randomToken('code');
       await prisma.$transaction(async (tx) => {
-        await tx.connector_oauth_requests.delete({ where: { id: requestId } });
+        await tx.connector_oauth_requests.deleteMany({ where: { id: requestId } });
         await tx.connector_oauth_codes.create({
           data: {
             code,
@@ -345,6 +384,12 @@ export function registerConnectorOAuthRoutes(app: Express) {
       });
 
       console.log('[connector/oauth/exchange] issued code', { codePreview: code.slice(0, 12), supabaseUserId });
+      logFlow('exchange_issued_code', {
+        request_id: requestId,
+        code_preview: code.slice(0, 12),
+        client_id: requestEntry.client_id,
+        redirect_uri: requestEntry.redirect_uri,
+      });
 
       const redirectUrl = new URL(requestEntry.redirect_uri);
       redirectUrl.searchParams.set('code', code);
@@ -377,6 +422,10 @@ export function registerConnectorOAuthRoutes(app: Express) {
       return res.json(payload);
     } catch (error: any) {
       console.error('[connector/oauth/exchange] failed', error?.message || error);
+      logFlow('exchange_failed', {
+        request_id: requestId,
+        error: (error?.message || String(error)),
+      });
       return res.status(500).json({ ok: false, error: 'exchange_failed' });
     }
   });
@@ -401,6 +450,15 @@ export function registerConnectorOAuthRoutes(app: Express) {
         return res.status(400).json({ error: 'invalid_grant' });
       }
 
+      logFlow('token_code_start', {
+        code_preview: code.slice(0, 12),
+        client_id: record.client_id,
+        duplicate_token_call: seenCodes.has(code),
+        ip: req.ip,
+        ua: req.headers['user-agent'] || req.headers['User-Agent'] || '',
+      });
+      seenCodes.add(code);
+
       if (record.code_challenge) {
         const verifier = getParam(req, 'code_verifier').trim();
         if (verifier && (record.code_challenge_method || 'S256').toUpperCase() === 'S256') {
@@ -419,16 +477,27 @@ export function registerConnectorOAuthRoutes(app: Express) {
         const supabaseUserId = refreshed.user?.id || record.supabase_user_id;
         const expiresIn = refreshed.expires_in || record.expires_in || getConnectorTokenTTLSeconds();
 
-        return res.json({
+        const body = {
           token_type: 'bearer',
           access_token: accessToken,
           refresh_token: refreshToken,
           expires_in: expiresIn,
           supabase_user_id: supabaseUserId,
           scope: record.scope || undefined,
+        } as const;
+        logFlow('token_code_success', {
+          code_preview: code.slice(0, 12),
+          client_id: record.client_id,
+          supabase_user_id: supabaseUserId,
         });
+        return res.json(body);
       } catch (error: any) {
         console.error('[connector/oauth/token] authorization_code failed', error?.message || error);
+        logFlow('token_code_failed', {
+          code_preview: code.slice(0, 12),
+          client_id: record.client_id,
+          error: (error?.message || String(error)),
+        });
         return res.status(500).json({ error: 'invalid_grant' });
       }
     }
@@ -444,15 +513,18 @@ export function registerConnectorOAuthRoutes(app: Express) {
         const nextRefreshToken = session.refresh_token || refreshToken;
         const supabaseUserId = session.user?.id || null;
         const expiresIn = session.expires_in || getConnectorTokenTTLSeconds();
-        return res.json({
+        const body = {
           token_type: 'bearer',
           access_token: accessToken,
           refresh_token: nextRefreshToken,
           expires_in: expiresIn,
           supabase_user_id: supabaseUserId,
-        });
+        } as const;
+        logFlow('token_refresh_success', { supabase_user_id: supabaseUserId });
+        return res.json(body);
       } catch (error: any) {
         console.error('[connector/oauth/token] refresh_token failed', error?.message || error);
+        logFlow('token_refresh_failed', { error: (error?.message || String(error)) });
         return res.status(400).json({ error: 'invalid_grant' });
       }
     }

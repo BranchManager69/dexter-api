@@ -39,6 +39,14 @@ export async function exchangeRefreshToken(refreshToken: string): Promise<Supaba
 
   if (!response.ok) {
     const text = await response.text().catch(() => 'unknown');
+    try {
+      console.error('[oauth-flow]', JSON.stringify({
+        ts: new Date().toISOString(),
+        event: 'supabase_refresh_failed',
+        status: response.status,
+        body: text.slice(0, 512),
+      }));
+    } catch {}
     throw new Error(`supabase_refresh_failed:${response.status}:${text}`);
   }
 

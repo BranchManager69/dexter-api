@@ -241,12 +241,31 @@ export function registerConnectorOAuthRoutes(app: Express) {
       return res.status(400).json({ ok: false, error: 'invalid_request', message: 'client_id and redirect_uri are required' });
     }
 
-    if (allowedClientIds.size && !allowedClientIds.has(clientId)) {
-      return res.status(400).json({ ok: false, error: 'unauthorized_client', message: 'client_id not allowed' });
-    }
-
-    if (!allowedRedirects.has(redirectUri)) {
-      return res.status(400).json({ ok: false, error: 'invalid_redirect', message: 'redirect_uri not allowed' });
+    // Authorize if client is in static/env allowlist OR registered via DCR (DB lookup)
+    let dcrAllowed = false;
+    if (!(allowedClientIds.size && allowedClientIds.has(clientId))) {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const found: any = await prisma.mcp_oauth_clients.findUnique({ where: { client_id: clientId } });
+        if (found) {
+          // Enforce redirect_uri matches one of the registered URIs
+          const list = Array.isArray(found.redirect_uris) ? (found.redirect_uris as unknown[]).map((x) => String(x)) : [];
+          if (!list.includes(redirectUri)) {
+            return res.status(400).json({ ok: false, error: 'invalid_redirect', message: 'redirect_uri not registered for client' });
+          }
+          dcrAllowed = true;
+        }
+      } catch (e) {
+        console.warn('[connector/oauth/authorize] DCR lookup failed', (e as Error)?.message || e);
+      }
+      if (!dcrAllowed) {
+        return res.status(400).json({ ok: false, error: 'unauthorized_client', message: 'client_id not allowed' });
+      }
+    } else {
+      // Static clients must use an allowed redirect
+      if (!allowedRedirects.has(redirectUri)) {
+        return res.status(400).json({ ok: false, error: 'invalid_redirect', message: 'redirect_uri not allowed' });
+      }
     }
 
     const requestId = randomToken('auth');

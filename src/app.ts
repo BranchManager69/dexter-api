@@ -14,6 +14,7 @@ import { createRealtimeSessionWithEnv } from './realtime.js';
 import { registerAuthConfigRoute } from './routes/authConfig.js';
 import { registerWalletRoutes } from './routes/wallets.js';
 import { registerConnectorOAuthRoutes } from './routes/connectorOAuth.js';
+import { registerMcpDcrRoutes } from './routes/mcpDcr.js';
 import { registerX402Routes } from './payments/registerX402.js';
 
 export const env = loadEnv();
@@ -209,4 +210,5 @@ app.get('/api/tools', handleToolsListing);
 registerAuthConfigRoute(app);
 registerWalletRoutes(app);
 registerConnectorOAuthRoutes(app);
+registerMcpDcrRoutes(app);
 registerX402Routes(app, env);

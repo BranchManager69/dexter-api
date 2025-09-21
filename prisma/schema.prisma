@@ -10,6 +10,22 @@ datasource db {
   directUrl = env("DATABASE_URL_SESSION")
 }
 
+/// Registered OAuth clients for MCP Dynamic Client Registration (DCR)
+model mcp_oauth_clients {
+  client_id                  String    @id @db.VarChar(255)
+  redirect_uris             Json      @default("[]")
+  grant_types               String[]  @default(["authorization_code"]) @db.VarChar(64)
+  response_types            String[]  @default(["code"]) @db.VarChar(64)
+  token_endpoint_auth_method String    @default("none") @db.VarChar(32)
+  application_type          String?   @default("web") @db.VarChar(32)
+  pkce_required             Boolean   @default(true)
+  metadata                  Json      @default("{}")
+  created_at                DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at                DateTime  @updatedAt @db.Timestamptz(6)
+
+  @@map("mcp_oauth_clients")
+}
+
 /// Agent memory store for per-token AI context/state
 model agent_memory {
   token_address      String   @id @db.VarChar(44)

@@ -24,6 +24,7 @@ function preloadParentEnv() {
       'SUPABASE_SERVICE_ROLE_KEY',
       'SUPABASE_JWT_SECRET',
       'DATABASE_URL',
+      'CONNECTOR_CODE_SALT',
     ]);
     for (const key of Array.from(needed)) {
       const current = process.env[key];

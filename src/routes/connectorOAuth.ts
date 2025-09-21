@@ -3,6 +3,11 @@ import crypto from 'node:crypto';
 import prisma from '../prisma.js';
 import { exchangeRefreshToken, getConnectorTokenTTLSeconds, getSupabaseUserFromAccessToken } from '../utils/supabaseAdmin.js';
 
+const CONNECTOR_CODE_SALT = (process.env.CONNECTOR_CODE_SALT || '').trim();
+if (!CONNECTOR_CODE_SALT || CONNECTOR_CODE_SALT.length < 16) {
+  throw new Error('CONNECTOR_CODE_SALT must be set to a secret string (min 16 characters).');
+}
+
 const DEFAULT_ALLOWED_REDIRECTS = [
   'https://claude.ai/api/mcp/auth_callback',
   'https://chatgpt.com/connector_platform_oauth_redirect',
@@ -155,12 +160,25 @@ function randomToken(prefix: string): string {
   return `${prefix}_${crypto.randomBytes(18).toString('hex')}`;
 }
 
+function deterministicCodeFromRequestId(requestId: string): string {
+  const hash = crypto.createHash('sha256').update(`${CONNECTOR_CODE_SALT}|${requestId}`).digest('hex');
+  // Keep length similar to prior random codes
+  return `code_${hash.slice(0, 24)}`;
+}
+
 function base64Url(value: Buffer): string {
   return value
     .toString('base64')
     .replace(/=/g, '')
     .replace(/\+/g, '-')
     .replace(/\//g, '_');
+}
+
+function buildRedirectUrl(redirectUri: string, code: string, state: string | null): URL {
+  const url = new URL(redirectUri);
+  url.searchParams.set('code', code);
+  if (state) url.searchParams.set('state', state);
+  return url;
 }
 
 function base64UrlSha256(input: string): string {
@@ -362,6 +380,14 @@ export function registerConnectorOAuthRoutes(app: Express) {
       return res.status(500).json({ ok: false, error: 'internal_error' });
     }
     if (!requestEntry) {
+      // Idempotency: it may have been exchanged already; return same code if it exists
+      const codeDet = deterministicCodeFromRequestId(requestId);
+      try {
+        const existing = await prisma.connector_oauth_codes.findUnique({ where: { code: codeDet } });
+        if (existing) {
+          return res.json({ ok: true, redirect_uri: existing.redirect_uri, redirect_url: buildRedirectUrl(existing.redirect_uri, codeDet, existing.state || null).toString(), code: codeDet, state: existing.state || null });
+        }
+      } catch {}
       return res.status(404).json({ ok: false, error: 'request_not_found' });
     }
 
@@ -381,11 +407,10 @@ export function registerConnectorOAuthRoutes(app: Express) {
       const nextRefreshToken = refreshToken;
       const supabaseUserId = null;
       const expiresIn = getConnectorTokenTTLSeconds();
-
-      const code = randomToken('code');
-      await prisma.$transaction(async (tx) => {
-        await tx.connector_oauth_requests.deleteMany({ where: { id: requestId } });
-        await tx.connector_oauth_codes.create({
+      // Deterministic code to make exchange idempotent by request_id
+      const code = deterministicCodeFromRequestId(requestId);
+      try {
+        await prisma.connector_oauth_codes.create({
           data: {
             code,
             client_id: requestEntry.client_id,
@@ -400,7 +425,18 @@ export function registerConnectorOAuthRoutes(app: Express) {
             expires_in: expiresIn,
           },
         });
-      });
+      } catch (e:any) {
+        // If already created by a competing request, proceed idempotently
+        try {
+          const existing = await prisma.connector_oauth_codes.findUnique({ where: { code } });
+          if (!existing) throw e;
+        } catch {
+          console.error('[connector/oauth/exchange] failed to create code', e?.message || e);
+          return res.status(500).json({ ok: false, error: 'exchange_failed' });
+        }
+      }
+      // Best-effort cleanup of the request row (don’t fail if already deleted)
+      try { await prisma.connector_oauth_requests.deleteMany({ where: { id: requestId } }); } catch {}
 
       console.log('[connector/oauth/exchange] issued code', { codePreview: code.slice(0, 12), supabaseUserId });
       logFlow('exchange_issued_code', {
@@ -410,12 +446,7 @@ export function registerConnectorOAuthRoutes(app: Express) {
         redirect_uri: requestEntry.redirect_uri,
       });
 
-      const redirectUrl = new URL(requestEntry.redirect_uri);
-      redirectUrl.searchParams.set('code', code);
-      if (requestEntry.state) {
-        redirectUrl.searchParams.set('state', requestEntry.state);
-      }
-      const redirectUrlString = redirectUrl.toString();
+      const redirectUrlString = buildRedirectUrl(requestEntry.redirect_uri, code, requestEntry.state).toString();
       const userAgent = (req.headers['user-agent'] || req.headers['User-Agent']) as string | undefined;
       const platform = detectPlatformFromUserAgent(userAgent);
       const mobileRedirectUrl = buildMobileRedirectUrl(
@@ -511,11 +542,22 @@ export function registerConnectorOAuthRoutes(app: Express) {
         });
         return res.json(body);
       } catch (error: any) {
-        console.error('[connector/oauth/token] authorization_code failed', error?.message || error);
+        const msg = error?.message || String(error);
+        // Return a clean 400 if code already consumed (idempotent failure)
+        const isNotFound = /No record was found for a delete|Record to delete does not exist/i.test(msg);
+        if (isNotFound) {
+          logFlow('token_code_failed', {
+            code_preview: code.slice(0, 12),
+            client_id: record.client_id,
+            error: 'already_consumed',
+          });
+          return res.status(400).json({ error: 'invalid_grant' });
+        }
+        console.error('[connector/oauth/token] authorization_code failed', msg);
         logFlow('token_code_failed', {
           code_preview: code.slice(0, 12),
           client_id: record.client_id,
-          error: (error?.message || String(error)),
+          error: msg,
         });
         return res.status(500).json({ error: 'invalid_grant' });
       }

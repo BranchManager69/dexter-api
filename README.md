@@ -57,7 +57,7 @@ Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billi
    npm ci
    cp .env.example .env
    ```
-2. Update the secrets you actually use (OpenAI keys, Supabase project, MCP endpoint, optional x402 settings). The loader in `src/env.ts` also backfills values from sibling repos when present, but an explicit `.env` is preferred for clarity.
+2. Update the secrets you actually use (OpenAI keys, Supabase project, MCP endpoint, optional x402 settings). **Connector OAuth requires `CONNECTOR_CODE_SALT` to be a long random string**—set it in `.env` and in `dexter-ops/.env` if you lean on the preload shim. The loader in `src/env.ts` also backfills values from sibling repos when present, but an explicit `.env` is preferred for clarity.
 3. Boot the API:
    ```bash
    npm run dev
@@ -82,6 +82,7 @@ Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billi
 - `npm test` – run the Vitest suite, including the production-like MCP health probe.
 - `npm run lint` – lint source files (warnings do not fail the command).
 - `npm run x402:test` – Solana payment smoke test against the Coinbase x402 facilitator.
+- `npm run probe:oauth` – end-to-end connector OAuth probe (creates a disposable Supabase user, steps through authorize → exchange → token → userinfo, then cleans up).
 
 ## Docs & References
 - `docs/` contains the GitBook sources (`SUMMARY.md`, integration plans, etc.). Keep the deep-dives there and link from the README when context is missing.

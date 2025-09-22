@@ -57,16 +57,22 @@ Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billi
    npm ci
    cp .env.example .env
    ```
-2. Update the secrets you actually use (OpenAI keys, Supabase project, MCP endpoint, optional x402 settings). **Connector OAuth requires `CONNECTOR_CODE_SALT` to be a long random string**—set it in `.env` and in `dexter-ops/.env` if you lean on the preload shim. The loader in `src/env.ts` also backfills values from sibling repos when present, but an explicit `.env` is preferred for clarity.
+2. Update the secrets you actually use (OpenAI keys, Supabase project, MCP endpoint, optional x402 settings). **Connector OAuth requires `CONNECTOR_CODE_SALT` to be a long random string**—set it in `.env` (local values win) and mirror it in `dexter-ops/.env` if you lean on the shared preload. `src/env.ts` now prefers the repo-local `.env` first, then backfills from sibling repos when values are missing.
 3. Boot the API:
    ```bash
    npm run dev
    # Server: http://127.0.0.1:3030
    ```
 
+## Supabase Project
+- The Supabase project for Dexter lives in this repo under `supabase/` (tracked `config.toml` plus migrations). Keep `.temp/` untracked—those files are per-machine caches.
+- After schema changes, run `supabase db pull <name>` to capture migrations. The initial pull (`20250922160133_initial.sql`) mirrors the live `public` schema; regenerate as needed when the remote DB evolves.
+- Network restrictions must allow your IP before running `supabase db pull` or `supabase db push`. Update the Supabase dashboard first if the CLI reports connection refusals.
+- Do not duplicate this scaffold in other Dexter repos; `dexter-api` is the source of truth. Consumer repos should rely on the hosted API or copy the tracked migrations explicitly when required.
+
 ## Key Endpoints
 - `GET /health` → `{ ok: true, service, mcp }` probe for readiness and configured MCP base URL.
-- `POST /realtime/sessions` → ephemeral session payload for browser WebRTC clients (defaults to `env.OPENAI_REALTIME_MODEL`).
+- `POST /realtime/sessions` → ephemeral session payload for browser WebRTC clients (defaults to `env.OPENAI_REALTIME_MODEL`, accepts optional `supabaseAccessToken` to attach identity metadata).
 - `POST /chat` → runs the primary agent through the OpenAI Agents runner and returns the final text/output.
 - `GET /chat/stream` → server-sent event stream for live chat completions.
 - `GET /mcp/health` → pass-through health check for the configured MCP server.

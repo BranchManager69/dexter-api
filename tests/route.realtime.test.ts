@@ -40,6 +40,7 @@ describe('POST /realtime/sessions route', () => {
     process.env.MCP_URL = 'https://mcp.dexter.cash/mcp';
     process.env.TOKEN_AI_MCP_TOKEN = 'abc123';
     process.env.MCP_ALLOWED_TOOLS_VOICE = 'buy,sell';
+    process.env.MCP_JWT_SECRET = process.env.MCP_JWT_SECRET || 'test-secret-key-that-is-long-enough-123456';
   });
 
   afterAll(async () => {
@@ -55,7 +56,6 @@ describe('POST /realtime/sessions route', () => {
     expect(r.status).toBe(200);
     const json = r.body;
     expect(json?.client_secret?.value || json?.client_secret).toBeTruthy();
-
     const body = stub.getLastBody();
     expect(body).toBeTruthy();
     expect(body.model).toBe('gpt-realtime');
@@ -67,4 +67,3 @@ describe('POST /realtime/sessions route', () => {
     expect(t.allowed_tools).toEqual(['buy', 'sell']);
   });
 });
-

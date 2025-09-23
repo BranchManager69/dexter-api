@@ -8,10 +8,8 @@ function preloadParentEnv() {
   try {
     const cwd = process.cwd();
     const candidates = [
-      path.resolve(cwd, '../dexter-ops/.env'), // shared ops repo env
-      path.resolve(cwd, '../../.env'),        // legacy repo root
-      path.resolve(cwd, '../.env'),           // legacy alpha/.env
-      path.resolve(cwd, '.env'),              // service-local .env
+      path.resolve(cwd, '.env'),              // service-local .env (overrides shared defaults)
+      path.resolve(cwd, '../dexter-ops/.env'), // shared ops repo env fallback
     ];
     const needed = new Set([
       'OPENAI_API_KEY',
@@ -19,6 +17,7 @@ function preloadParentEnv() {
       'TEXT_MODEL',
       'MCP_URL',
       'TOKEN_AI_MCP_TOKEN',
+      'MCP_JWT_SECRET',
       'SUPABASE_URL',
       'SUPABASE_ANON_KEY',
       'SUPABASE_SERVICE_ROLE_KEY',
@@ -86,6 +85,11 @@ const envSchema = z.object({
   MCP_URL: z.string().url().default('https://mcp.dexter.cash/mcp'),
   // Bearer token for MCP when OAuth is enabled on the MCP server
   TOKEN_AI_MCP_TOKEN: z.string().optional().default(''),
+  MCP_JWT_SECRET: z.string().min(16, 'MCP_JWT_SECRET must be at least 16 characters'),
+  MCP_JWT_TTL_SECONDS: z
+    .string()
+    .optional()
+    .default(''),
   // Optional comma-separated allowlists to constrain tools per surface
   MCP_ALLOWED_TOOLS_CHAT: z.string().optional().default(''),
   MCP_ALLOWED_TOOLS_VOICE: z.string().optional().default(''),
@@ -114,6 +118,8 @@ export function loadEnv(): Env {
     TEXT_MODEL: process.env.TEXT_MODEL,
     MCP_URL: process.env.MCP_URL,
     TOKEN_AI_MCP_TOKEN: process.env.TOKEN_AI_MCP_TOKEN,
+    MCP_JWT_SECRET: process.env.MCP_JWT_SECRET,
+    MCP_JWT_TTL_SECONDS: process.env.MCP_JWT_TTL_SECONDS,
     MCP_ALLOWED_TOOLS_CHAT: process.env.MCP_ALLOWED_TOOLS_CHAT,
     MCP_ALLOWED_TOOLS_VOICE: process.env.MCP_ALLOWED_TOOLS_VOICE,
     PORT: process.env.PORT,

@@ -57,7 +57,7 @@ Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billi
    npm ci
    cp .env.example .env
    ```
-2. Update the secrets you actually use (OpenAI keys, Supabase project, MCP endpoint, optional x402 settings). **Connector OAuth requires `CONNECTOR_CODE_SALT` to be a long random string**—set it in `.env` (local values win) and mirror it in `dexter-ops/.env` if you lean on the shared preload. `src/env.ts` now prefers the repo-local `.env` first, then backfills from sibling repos when values are missing.
+2. Update the secrets you actually use (OpenAI keys, Supabase project, MCP endpoint, optional x402 settings). **Connector OAuth requires `CONNECTOR_CODE_SALT` to be a long random string**—set it in `.env` (local values win) and mirror it in `dexter-ops/.env` if you lean on the shared preload. **`MCP_JWT_SECRET` is required** so the token endpoint can mint Dexter-signed per-user MCP JWTs (override `MCP_JWT_TTL_SECONDS` if you need a custom lifetime). `src/env.ts` now prefers the repo-local `.env` first, then backfills from sibling repos when values are missing.
 3. Boot the API:
    ```bash
    npm run dev
@@ -81,6 +81,18 @@ Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billi
 - `GET /api/wallets/resolver` → resolves the caller's managed wallets (requires Supabase auth).
 - `POST /pro/subscribe` → Coinbase x402 payment hook that activates the `tier: pro` subscription.
 - Connector OAuth helper routes live under `/api/connector/oauth/*` (authorize, request, exchange, token) for Claude/ChatGPT integration.
+  - `/api/connector/oauth/token` returns Supabase access/refresh tokens and, when `MCP_JWT_SECRET` is set, includes a `dexter_mcp_jwt` for the hosted MCP server.
+
+### Realtime Session Flow
+1. **Client request** – `POST /realtime/sessions` with optional `model`, `supabaseAccessToken`, and `guestProfile` hints.
+2. **Identity normalization** – the route defaults to `guest` and, if a Supabase token is supplied, verifies it via `getSupabaseUserFromAccessToken` to promote the identity to `user` with id/email metadata.
+3. **Guest profile shaping** – demo callers receive a label/instructions payload so the client can render context for the shared wallet.
+4. **Session creation** – `createRealtimeSessionWithEnv()` composes the MCP tool allowlist, merges the guest/user instructions, and `POST`s to `${OPENAI_API_BASE||https://api.openai.com}/v1/realtime/sessions` using the configured API key.
+5. **Response envelope** – the route returns OpenAI’s ephemeral session JSON plus a `dexter_session` block describing the resolved identity and guest profile.
+
+```
+Client → /realtime/sessions → normalize identity → build MCP tool payload → OpenAI Realtime API → response + dexter_session
+```
 
 ## Core Scripts
 - `npm run dev` – start the local server with hot reload (`tsx`).

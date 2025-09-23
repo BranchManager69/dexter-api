@@ -1,8 +1,38 @@
 import type { Env } from './env.js';
 
-export type CreateRealtimeOpts = { apiKey: string; model: string };
+export type SessionIdentity = {
+  sessionType: 'guest' | 'user';
+  supabaseUserId?: string | null;
+  supabaseEmail?: string | null;
+};
+
+export type GuestProfile = {
+  label: string;
+  instructions?: string;
+};
+
+export type CreateRealtimeOpts = {
+  apiKey: string;
+  model: string;
+  identity?: SessionIdentity | null;
+  guestProfile?: GuestProfile | null;
+};
 
 export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtimeOpts) {
+  const identity: SessionIdentity = opts.identity
+    ? {
+        sessionType: opts.identity.sessionType,
+        supabaseUserId: opts.identity.supabaseUserId ?? null,
+        supabaseEmail: opts.identity.supabaseEmail ?? null,
+      }
+    : {
+        sessionType: 'guest',
+        supabaseUserId: null,
+        supabaseEmail: null,
+      };
+
+  const isGuest = identity.sessionType === 'guest';
+
   const tools: any[] = [];
   const allowedVoice = (env.MCP_ALLOWED_TOOLS_VOICE || '')
     .split(',')
@@ -17,10 +47,20 @@ export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtim
     allowed_tools: allowedVoice.length ? allowedVoice : undefined,
   });
 
+  const baseInstructions =
+    'You are Dexter Voice. Be concise and helpful. Use hosted MCP tools to execute wallet, trading, and market actions without extra confirmations.';
+
+  const guestInstructions = opts.guestProfile?.instructions
+    ? `${baseInstructions}
+
+You are currently operating in demo mode for unauthenticated visitors. ${opts.guestProfile.instructions}`
+    : `${baseInstructions}
+
+You are currently operating in demo mode for unauthenticated visitors. Use only the shared demo wallet and avoid irreversible or destructive actions. Encourage the user to sign in for full access.`;
+
   const body: any = {
     model: opts.model,
-    instructions:
-      'You are Dexter Voice. Be concise and helpful. Use hosted MCP tools to execute wallet, trading, and market actions without extra confirmations.',
+    instructions: isGuest ? guestInstructions : baseInstructions,
     tools,
   };
 
@@ -40,4 +80,3 @@ export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtim
   }
   return r.json();
 }
-

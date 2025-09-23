@@ -2,6 +2,8 @@ import type { Express, Request, Response } from 'express';
 import crypto from 'node:crypto';
 import prisma from '../prisma.js';
 import { exchangeRefreshToken, getConnectorTokenTTLSeconds, getSupabaseUserFromAccessToken } from '../utils/supabaseAdmin.js';
+import { issueMcpJwt } from '../utils/mcpJwt.js';
+import type { Env } from '../env.js';
 
 const CONNECTOR_CODE_SALT = (process.env.CONNECTOR_CODE_SALT || '').trim();
 if (!CONNECTOR_CODE_SALT || CONNECTOR_CODE_SALT.length < 16) {
@@ -228,7 +230,7 @@ function getParam(req: Request, key: string): string {
   return '';
 }
 
-export function registerConnectorOAuthRoutes(app: Express) {
+export function registerConnectorOAuthRoutes(app: Express, env: Env) {
   // Structured flow logging (non-invasive). Helps correlate authorize → exchange → token.
   const seenRequestIds: Set<string> = new Set();
   const seenCodes: Set<string> = new Set();
@@ -527,14 +529,21 @@ export function registerConnectorOAuthRoutes(app: Express) {
         const supabaseUserId = refreshed.user?.id || record.supabase_user_id;
         const expiresIn = refreshed.expires_in || record.expires_in || getConnectorTokenTTLSeconds();
 
-        const body = {
+        const body: Record<string, unknown> = {
           token_type: 'bearer',
           access_token: accessToken,
           refresh_token: refreshToken,
           expires_in: expiresIn,
           supabase_user_id: supabaseUserId,
           scope: record.scope || undefined,
-        } as const;
+        };
+        const dexterMcpJwt = issueMcpJwt(env, {
+          supabase_user_id: supabaseUserId,
+          scope: record.scope || null,
+        });
+        if (dexterMcpJwt) {
+          body.dexter_mcp_jwt = dexterMcpJwt;
+        }
         logFlow('token_code_success', {
           code_preview: code.slice(0, 12),
           client_id: record.client_id,
@@ -574,13 +583,20 @@ export function registerConnectorOAuthRoutes(app: Express) {
         const nextRefreshToken = session.refresh_token || refreshToken;
         const supabaseUserId = session.user?.id || null;
         const expiresIn = session.expires_in || getConnectorTokenTTLSeconds();
-        const body = {
+        const body: Record<string, unknown> = {
           token_type: 'bearer',
           access_token: accessToken,
           refresh_token: nextRefreshToken,
           expires_in: expiresIn,
           supabase_user_id: supabaseUserId,
-        } as const;
+        };
+        const dexterMcpJwt = issueMcpJwt(env, {
+          supabase_user_id: supabaseUserId,
+          scope: null,
+        });
+        if (dexterMcpJwt) {
+          body.dexter_mcp_jwt = dexterMcpJwt;
+        }
         logFlow('token_refresh_success', { supabase_user_id: supabaseUserId });
         return res.json(body);
       } catch (error: any) {

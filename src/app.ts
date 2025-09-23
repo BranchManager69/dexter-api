@@ -9,7 +9,8 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { chatStreamHandler } from './chatStream.js';
 import { buildSpecialistAgents } from './agents.js';
-import { createRealtimeSessionWithEnv } from './realtime.js';
+import { createRealtimeSessionWithEnv, type SessionIdentity } from './realtime.js';
+import { getSupabaseUserFromAccessToken } from './utils/supabaseAdmin.js';
 
 import { registerAuthConfigRoute } from './routes/authConfig.js';
 import { registerWalletRoutes } from './routes/wallets.js';
@@ -21,6 +22,21 @@ export const env = loadEnv();
 export const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({ limit: '2mb' }));
+
+function normalizeIdentity(input: SessionIdentity): SessionIdentity {
+  if (input.sessionType === 'user') {
+    return {
+      sessionType: 'user',
+      supabaseUserId: input.supabaseUserId ?? null,
+      supabaseEmail: input.supabaseEmail ?? null,
+    };
+  }
+  return {
+    sessionType: 'guest',
+    supabaseUserId: null,
+    supabaseEmail: null,
+  };
+}
 
 const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 
@@ -115,8 +131,62 @@ app.get('/health', async (_req, res) => {
 app.post('/realtime/sessions', async (req, res) => {
   try {
     const model = (req.body?.model as string) || env.OPENAI_REALTIME_MODEL;
-    const out = await createRealtimeSessionWithEnv(env, { apiKey: env.OPENAI_API_KEY, model });
-    return res.json(out);
+    if (!env.OPENAI_API_KEY) {
+      return res.status(501).json({ ok: false, error: 'OPENAI_API_KEY not configured' });
+    }
+
+    const accessToken = typeof req.body?.supabaseAccessToken === 'string' && req.body.supabaseAccessToken.trim()
+      ? String(req.body.supabaseAccessToken).trim()
+      : '';
+
+    let identity = normalizeIdentity({ sessionType: 'guest' });
+    if (accessToken) {
+      try {
+        const user = await getSupabaseUserFromAccessToken(accessToken);
+        identity = normalizeIdentity({
+          sessionType: 'user',
+          supabaseUserId: user.id,
+          supabaseEmail: user.email ?? null,
+        });
+      } catch (error: any) {
+        console.warn('[realtime.sessions] failed to verify Supabase token', error?.message || error);
+      }
+    }
+
+    const guestProfile =
+      identity.sessionType === 'guest'
+        ? {
+            label: req.body?.guestProfile?.label || 'Demo Wallet',
+            instructions:
+              req.body?.guestProfile?.instructions ||
+              'Operate using the shared Dexter demo wallet with limited funds. Disable irreversible actions when possible and direct the user to sign in for full access.',
+          }
+        : null;
+
+    console.log('[realtime.sessions] creating session', {
+      sessionType: identity.sessionType,
+      supabaseUserId: identity.supabaseUserId || null,
+      supabaseEmail: identity.supabaseEmail || null,
+      model,
+    });
+
+    const out = await createRealtimeSessionWithEnv(env, {
+      apiKey: env.OPENAI_API_KEY,
+      model,
+      identity,
+      guestProfile,
+    });
+
+    return res.json({
+      ...out,
+      dexter_session: {
+        type: identity.sessionType,
+        user: identity.sessionType === 'user'
+          ? { id: identity.supabaseUserId, email: identity.supabaseEmail }
+          : null,
+        guest_profile: guestProfile,
+      },
+    });
   } catch (err: any) {
     const msg = err?.message || String(err);
     return res.status(500).json({ ok: false, error: msg });
@@ -209,6 +279,6 @@ app.get('/api/tools', handleToolsListing);
 
 registerAuthConfigRoute(app);
 registerWalletRoutes(app);
-registerConnectorOAuthRoutes(app);
+registerConnectorOAuthRoutes(app, env);
 registerMcpDcrRoutes(app);
 registerX402Routes(app, env);

@@ -17,6 +17,7 @@ import { registerWalletRoutes } from './routes/wallets.js';
 import { registerConnectorOAuthRoutes } from './routes/connectorOAuth.js';
 import { registerMcpDcrRoutes } from './routes/mcpDcr.js';
 import { registerX402Routes } from './payments/registerX402.js';
+import { registerSolanaRoutes } from './routes/solana.js';
 
 export const env = loadEnv();
 export const app = express();
@@ -282,3 +283,4 @@ registerWalletRoutes(app);
 registerConnectorOAuthRoutes(app, env);
 registerMcpDcrRoutes(app);
 registerX402Routes(app, env);
+registerSolanaRoutes(app);

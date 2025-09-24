@@ -22,7 +22,7 @@ const MAX_WALLETS_PRO = 10;
 export type UserTier = 'free' | 'pro';
 
 export interface UserWalletLink {
-  walletId: string;
+  walletAddress: string;
   isDefault: boolean;
 }
 
@@ -42,13 +42,13 @@ async function getUserWalletLinks(supabaseUserId: string | null): Promise<UserWa
   const links = await prisma.oauth_user_wallets.findMany({
     where: { supabase_user_id: supabaseUserId },
     orderBy: { created_at: 'asc' },
-    select: { wallet_id: true, default_wallet: true },
+    select: { wallet_public_key: true, default_wallet: true },
   });
-  return links.map((link) => ({ walletId: link.wallet_id, isDefault: link.default_wallet }));
+  return links.map((link) => ({ walletAddress: link.wallet_public_key, isDefault: link.default_wallet }));
 }
 
-function selectAccessibleWalletId(
-  requestedWalletId: string | null,
+function selectAccessibleWalletAddress(
+  requestedWalletAddress: string | null,
   tier: UserTier,
   links: UserWalletLink[],
 ): string {
@@ -57,10 +57,10 @@ function selectAccessibleWalletId(
     if (!defaultLink) {
       throw new Error('no_wallet_linked');
     }
-    if (requestedWalletId && requestedWalletId !== defaultLink.walletId) {
+    if (requestedWalletAddress && requestedWalletAddress !== defaultLink.walletAddress) {
       throw new Error('wallet_not_allowed_free_tier');
     }
-    return defaultLink.walletId;
+    return defaultLink.walletAddress;
   }
 
   // pro tier
@@ -70,15 +70,15 @@ function selectAccessibleWalletId(
   if (links.length > MAX_WALLETS_PRO) {
     throw new Error('wallet_limit_exceeded');
   }
-  if (requestedWalletId) {
-    const match = links.find((link) => link.walletId === requestedWalletId);
+  if (requestedWalletAddress) {
+    const match = links.find((link) => link.walletAddress === requestedWalletAddress);
     if (!match) {
       throw new Error('wallet_not_linked');
     }
-    return requestedWalletId;
+    return requestedWalletAddress;
   }
   const defaultLink = links.find((link) => link.isDefault) || links[0];
-  return defaultLink.walletId;
+  return defaultLink.walletAddress;
 }
 
 function feeBpsForTier(tier: UserTier): number {
@@ -169,7 +169,7 @@ export async function resolveToken(query: string, limit = 5): Promise<ResolvedTo
 
 export interface BuyRequest {
   supabaseUserId: string | null;
-  walletId?: string | null;
+  walletAddress?: string | null;
   amountSol: number;
   mint: string;
   slippageBps?: number;
@@ -177,7 +177,7 @@ export interface BuyRequest {
 
 export interface TradeResult {
   signature: string;
-  walletId: string;
+  walletAddress: string;
   feeLamports: string;
   swapLamports: string;
   solscanUrl: string;
@@ -187,8 +187,8 @@ export interface TradeResult {
 export async function executeBuy(request: BuyRequest): Promise<TradeResult> {
   const tier = await getUserTier(request.supabaseUserId);
   const links = await getUserWalletLinks(request.supabaseUserId);
-  const walletId = selectAccessibleWalletId(request.walletId ?? null, tier, links);
-  const loaded = await loadManagedWallet(walletId);
+  const walletAddress = selectAccessibleWalletAddress(request.walletAddress ?? null, tier, links);
+  const loaded = await loadManagedWallet(walletAddress);
 
   const balanceLamports = BigInt(await connection.getBalance(loaded.publicKey, 'confirmed'));
  const amountLamports = BigInt(Math.floor(request.amountSol * LAMPORTS_PER_SOL));
@@ -239,7 +239,7 @@ export async function executeBuy(request: BuyRequest): Promise<TradeResult> {
 
   return {
     signature,
-    walletId,
+    walletAddress,
     feeLamports: feeLamports.toString(),
     swapLamports: lamportsForSwap.toString(),
     solscanUrl: `https://solscan.io/tx/${signature}`,
@@ -249,7 +249,7 @@ export async function executeBuy(request: BuyRequest): Promise<TradeResult> {
 
 export interface SellRequest {
   supabaseUserId: string | null;
-  walletId?: string | null;
+  walletAddress?: string | null;
   mint: string;
   amountRaw?: string;
   percentage?: number;
@@ -259,8 +259,8 @@ export interface SellRequest {
 export async function executeSell(request: SellRequest): Promise<TradeResult> {
   const tier = await getUserTier(request.supabaseUserId);
   const links = await getUserWalletLinks(request.supabaseUserId);
-  const walletId = selectAccessibleWalletId(request.walletId ?? null, tier, links);
-  const loaded = await loadManagedWallet(walletId);
+  const walletAddress = selectAccessibleWalletAddress(request.walletAddress ?? null, tier, links);
+  const loaded = await loadManagedWallet(walletAddress);
 
   const mintKey = new PublicKey(request.mint);
   const ata = await getAssociatedTokenAddress(mintKey, loaded.publicKey, false);
@@ -323,7 +323,7 @@ export async function executeSell(request: SellRequest): Promise<TradeResult> {
 
   return {
     signature,
-    walletId,
+    walletAddress,
     feeLamports: feeLamports.toString(),
     swapLamports: sellRaw.toString(),
     solscanUrl: `https://solscan.io/tx/${signature}`,
@@ -331,11 +331,16 @@ export async function executeSell(request: SellRequest): Promise<TradeResult> {
   };
 }
 
-export async function previewSellAll(params: { supabaseUserId: string | null; walletId?: string | null; mint: string; slippageBps?: number }): Promise<{ expectedSol: string; warnings: string[] }> {
+export async function previewSellAll(params: {
+  supabaseUserId: string | null;
+  walletAddress?: string | null;
+  mint: string;
+  slippageBps?: number;
+}): Promise<{ expectedSol: string; warnings: string[] }> {
   const tier = await getUserTier(params.supabaseUserId);
   const links = await getUserWalletLinks(params.supabaseUserId);
-  const walletId = selectAccessibleWalletId(params.walletId ?? null, tier, links);
-  const loaded = await loadManagedWallet(walletId);
+  const walletAddress = selectAccessibleWalletAddress(params.walletAddress ?? null, tier, links);
+  const loaded = await loadManagedWallet(walletAddress);
 
   const mintKey = new PublicKey(params.mint);
   const ata = await getAssociatedTokenAddress(mintKey, loaded.publicKey, false);

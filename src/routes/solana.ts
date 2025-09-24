@@ -13,17 +13,17 @@ export function registerSolanaRoutes(app: Express) {
   app.get('/api/solana/balances', async (req: Request, res: Response) => {
     try {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
-      const walletId = typeof req.query.walletId === 'string' ? req.query.walletId : null;
-      if (!walletId) {
-        return res.status(400).json({ ok: false, error: 'wallet_id_required' });
+      const walletAddress = typeof req.query.walletAddress === 'string' ? req.query.walletAddress.trim() : null;
+      if (!walletAddress) {
+        return res.status(400).json({ ok: false, error: 'wallet_address_required' });
       }
-      const wallet = await prisma.managed_wallets.findUnique({ where: { id: walletId } });
+      const wallet = await prisma.managed_wallets.findUnique({ where: { public_key: walletAddress } });
       if (!wallet) {
         return res.status(404).json({ ok: false, error: 'wallet_not_found' });
       }
       if (supabaseUserId) {
         const link = await prisma.oauth_user_wallets.findFirst({
-          where: { supabase_user_id: supabaseUserId, wallet_id: walletId },
+          where: { supabase_user_id: supabaseUserId, wallet_public_key: walletAddress },
           select: { id: true },
         });
         if (!link) {
@@ -59,7 +59,7 @@ export function registerSolanaRoutes(app: Express) {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
       const result = await executeBuy({
         supabaseUserId,
-        walletId: typeof req.body?.walletId === 'string' ? req.body.walletId : null,
+        walletAddress: typeof req.body?.walletAddress === 'string' ? req.body.walletAddress.trim() : null,
         amountSol: parseNumber(req.body?.amountSol, 0),
         mint: String(req.body?.mint || ''),
         slippageBps: req.body?.slippageBps != null ? Number(req.body.slippageBps) : undefined,
@@ -76,7 +76,7 @@ export function registerSolanaRoutes(app: Express) {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
       const result = await executeSell({
         supabaseUserId,
-        walletId: typeof req.body?.walletId === 'string' ? req.body.walletId : null,
+        walletAddress: typeof req.body?.walletAddress === 'string' ? req.body.walletAddress.trim() : null,
         mint: String(req.body?.mint || ''),
         amountRaw: typeof req.body?.amountRaw === 'string' ? req.body.amountRaw : undefined,
         percentage: req.body?.percentage != null ? Number(req.body.percentage) : undefined,
@@ -94,7 +94,7 @@ export function registerSolanaRoutes(app: Express) {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
       const result = await previewSellAll({
         supabaseUserId,
-        walletId: typeof req.query.walletId === 'string' ? req.query.walletId : null,
+        walletAddress: typeof req.query.walletAddress === 'string' ? req.query.walletAddress.trim() : null,
         mint: String(req.query.mint || ''),
         slippageBps: req.query.slippageBps != null ? Number(req.query.slippageBps) : undefined,
       });

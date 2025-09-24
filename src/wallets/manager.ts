@@ -72,25 +72,23 @@ function decryptWalletPayload(encryptedJson: string): Buffer {
 }
 
 export interface LoadedWallet {
-  id: string;
+  address: string;
   label: string | null;
   publicKey: PublicKey;
   keypair: Keypair;
 }
 
-export async function loadManagedWallet(walletIdOrAddress: string): Promise<LoadedWallet> {
-  const wallet = await prisma.managed_wallets.findFirst({
-    where: {
-      OR: [{ id: String(walletIdOrAddress) }, { public_key: String(walletIdOrAddress) }],
-    },
+export async function loadManagedWallet(walletPublicKey: string): Promise<LoadedWallet> {
+  const wallet = await prisma.managed_wallets.findUnique({
+    where: { public_key: String(walletPublicKey) },
   });
 
   if (!wallet) {
-    throw new Error(`managed_wallet_not_found:${walletIdOrAddress}`);
+    throw new Error(`managed_wallet_not_found:${walletPublicKey}`);
   }
 
   if (!wallet.encrypted_private_key) {
-    throw new Error(`wallet_missing_secret:${wallet.id}`);
+    throw new Error(`wallet_missing_secret:${wallet.public_key}`);
   }
 
   const seed = decryptWalletPayload(wallet.encrypted_private_key);
@@ -100,7 +98,7 @@ export async function loadManagedWallet(walletIdOrAddress: string): Promise<Load
 
   const keypair = Keypair.fromSeed(seed);
   return {
-    id: wallet.id,
+    address: wallet.public_key,
     label: wallet.label ?? null,
     publicKey: keypair.publicKey,
     keypair,
@@ -108,18 +106,18 @@ export async function loadManagedWallet(walletIdOrAddress: string): Promise<Load
 }
 
 export interface ManagedWalletSummary {
-  id: string;
+  address: string;
   publicKey: PublicKey;
   label: string | null;
 }
 
-export async function listManagedWalletsByIds(ids: string[]): Promise<ManagedWalletSummary[]> {
-  if (!ids.length) return [];
+export async function listManagedWalletsByAddresses(addresses: string[]): Promise<ManagedWalletSummary[]> {
+  if (!addresses.length) return [];
   const records = await prisma.managed_wallets.findMany({
-    where: { id: { in: ids } },
+    where: { public_key: { in: addresses } },
   });
   return records.map((record) => ({
-    id: record.id,
+    address: record.public_key,
     label: record.label ?? null,
     publicKey: new PublicKey(record.public_key),
   }));

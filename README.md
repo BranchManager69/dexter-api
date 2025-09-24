@@ -105,3 +105,10 @@ Client → /realtime/sessions → normalize identity → build MCP tool payload 
 ## Docs & References
 - `docs/` contains the GitBook sources (`SUMMARY.md`, integration plans, etc.). Keep the deep-dives there and link from the README when context is missing.
 - `docs/x402-integration-plan.md` outlines the full subscription flow and how wallet tiers unlock MCP tooling.
+
+## Overlay Stream Runner
+- **Overlay UI lives in `dexter-fe`** – the `/overlay/live` route in the Next.js repo renders the leaderboards and layout that OBS captures. Keep that repo cloned alongside `dexter-api` so the configs and PM2 scripts stay in sync.
+- **Runner script** – `dexter-fe/scripts/dexter-stream/run.mjs` boots Xvfb ➝ Playwright (Chromium) ➝ FFmpeg and pushes the overlay to your RTMP endpoint. Dependencies (`playwright`, `ffmpeg`, `xvfb`) must be installed on the host.
+- **Configuration** – copy `dexter-fe/scripts/dexter-stream/config.template.json` to `config.local.json` and set `rtmpBase` + `streamKey` (or `rtmpUrl`). The tracked `config.json` is safe to commit; the `*.local.json` variant is gitignored for secrets.
+- **Operations** – from the `dexter-fe` repo use `npm run dexter-stream:start` to register the PM2 worker (`dexter-stream`), `pm2 logs dexter-stream --nostream` to tail status, and `npm run dexter-stream:stop` to halt it. Successful boots log `dexter-stream ✅ streaming overlay → …/•••` once FFmpeg is publishing.
+- **Docs** – see `dexter-fe/scripts/dexter-stream/README.md` for the full walkthrough plus troubleshooting tips. Extend it as we add standby scenes or game-show layouts so operators have a single source of truth.

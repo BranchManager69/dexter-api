@@ -28,39 +28,30 @@ model mcp_oauth_clients {
 }
 
 /// Custodial Solana wallets
-model managed_wallets {
-  public_key            String               @id @db.VarChar(44)
-  encrypted_private_key String
-  label                 String?              @db.VarChar(255)
-  status                String               @default("active") @db.VarChar(20)
-  metadata              Json?                @default("{}")
-  created_at            DateTime             @default(now()) @db.Timestamptz(6)
-  updated_at            DateTime             @updatedAt @db.Timestamptz(6)
-  memo                  String?
-  oauth_user_wallets    oauth_user_wallets[]
-
-  @@map("managed_wallets")
+enum ManagedWalletStatus {
+  available
+  assigned
+  retired
 }
 
-/// OAuth user ↔ wallet mapping for MCP HTTP sessions
-model oauth_user_wallets {
-  id                String          @id @default(uuid())
-  provider          String          @db.VarChar(255)
-  subject           String          @db.VarChar(255)
-  email             String?         @db.VarChar(255)
-  default_wallet    Boolean         @default(false)
-  created_at        DateTime        @default(now()) @db.Timestamptz(6)
-  updated_at        DateTime        @updatedAt @db.Timestamptz(6)
-  /// Optional canonical owner mapping to Supabase auth.users.id
-  /// Left for future OAuth enrichment; populated directly from Supabase when available
-  supabase_user_id  String?         @db.VarChar(255)
-  wallet_public_key String          @db.VarChar(44)
-  managed_wallets   managed_wallets @relation(fields: [wallet_public_key], references: [public_key], onDelete: Cascade)
+model managed_wallets {
+  public_key                 String              @id @db.VarChar(44)
+  encrypted_private_key      String
+  label                      String?             @db.VarChar(255)
+  status                     ManagedWalletStatus @default(available)
+  metadata                   Json?               @default("{}")
+  memo                       String?
+  assigned_supabase_user_id  String?             @db.VarChar(255)
+  assigned_provider          String?             @db.VarChar(255)
+  assigned_subject           String?             @db.VarChar(255)
+  assigned_email             String?             @db.VarChar(255)
+  assigned_at                DateTime?           @db.Timestamptz(6)
+  created_at                 DateTime            @default(now()) @db.Timestamptz(6)
+  updated_at                 DateTime            @updatedAt @db.Timestamptz(6)
 
-  @@unique([provider, subject, wallet_public_key])
-  @@index([provider, subject])
-  @@index([supabase_user_id])
-  @@map("oauth_user_wallets")
+  @@index([status])
+  @@index([assigned_supabase_user_id])
+  @@map("managed_wallets")
 }
 
 /// Pending OAuth authorization requests for MCP connector flow

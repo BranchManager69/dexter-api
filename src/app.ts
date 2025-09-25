@@ -10,6 +10,7 @@ import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { chatStreamHandler } from './chatStream.js';
 import { buildSpecialistAgents } from './agents.js';
 import { createRealtimeSessionWithEnv, type SessionIdentity } from './realtime.js';
+import { ensureUserWallet } from './wallets/allocator.js';
 import { getSupabaseUserFromAccessToken } from './utils/supabaseAdmin.js';
 
 import { registerAuthConfigRoute } from './routes/authConfig.js';
@@ -18,11 +19,16 @@ import { registerConnectorOAuthRoutes } from './routes/connectorOAuth.js';
 import { registerMcpDcrRoutes } from './routes/mcpDcr.js';
 import { registerX402Routes } from './payments/registerX402.js';
 import { registerSolanaRoutes } from './routes/solana.js';
+import { registerStreamSceneRoutes } from './routes/streamScenes.js';
+import { logger, style } from './logger.js';
 
 export const env = loadEnv();
 export const app = express();
 app.use(express.urlencoded({ extended: false }));
 app.use(express.json({ limit: '2mb' }));
+
+const realtimeLog = logger.child('realtime.sessions');
+const mcpToolsLog = logger.child('mcp-tools');
 
 function normalizeIdentity(input: SessionIdentity): SessionIdentity {
   if (input.sessionType === 'user') {
@@ -150,7 +156,10 @@ app.post('/realtime/sessions', async (req, res) => {
           supabaseEmail: user.email ?? null,
         });
       } catch (error: any) {
-        console.warn('[realtime.sessions] failed to verify Supabase token', error?.message || error);
+        realtimeLog.warn(
+          `${style.status('verify', 'warn')} ${style.kv('error', error?.message || error)}`,
+          error
+        );
       }
     }
 
@@ -164,18 +173,32 @@ app.post('/realtime/sessions', async (req, res) => {
           }
         : null;
 
-    console.log('[realtime.sessions] creating session', {
-      sessionType: identity.sessionType,
-      supabaseUserId: identity.supabaseUserId || null,
-      supabaseEmail: identity.supabaseEmail || null,
-      model,
-    });
+    let walletAssignment: Awaited<ReturnType<typeof ensureUserWallet>> | null = null;
+    if (identity.sessionType === 'user' && identity.supabaseUserId) {
+      walletAssignment = await ensureUserWallet(env, {
+        supabaseUserId: identity.supabaseUserId,
+        email: identity.supabaseEmail ?? null,
+      });
+    }
+
+    realtimeLog.info(
+      `${style.status('start', 'start')} ${style.kv('type', identity.sessionType)} ${style.kv('model', model)}`,
+      {
+        sessionType: identity.sessionType,
+        supabaseUserId: identity.supabaseUserId || null,
+        supabaseEmail: identity.supabaseEmail || null,
+        wallet: walletAssignment?.wallet.public_key || null,
+        model,
+      }
+    );
 
     const out = await createRealtimeSessionWithEnv(env, {
       apiKey: env.OPENAI_API_KEY,
       model,
       identity,
       guestProfile,
+      mcpJwt: walletAssignment?.mcpJwt ?? null,
+      walletPublicKey: walletAssignment?.wallet.public_key ?? null,
     });
 
     return res.json({
@@ -186,6 +209,12 @@ app.post('/realtime/sessions', async (req, res) => {
           ? { id: identity.supabaseUserId, email: identity.supabaseEmail }
           : null,
         guest_profile: guestProfile,
+        wallet: walletAssignment?.wallet
+          ? {
+              public_key: walletAssignment.wallet.public_key,
+              label: walletAssignment.wallet.label,
+            }
+          : null,
       },
     });
   } catch (err: any) {
@@ -249,7 +278,9 @@ const handleToolsListing = async (_req: Request, res: Response) => {
   let transport: StreamableHTTPClientTransport | null = null;
   let client: Client | null = null;
   try {
-    console.log('[mcp-tools] listing tools via MCP server');
+    mcpToolsLog.info(
+      `${style.status('proxy', 'info')} ${style.kv('url', style.url(env.MCP_URL))}`
+    );
     const baseUrl = new URL(env.MCP_URL);
     client = new Client({ name: 'dexter-api-tools-proxy', version: '1.0.0' });
     transport = new StreamableHTTPClientTransport(baseUrl, {
@@ -260,10 +291,16 @@ const handleToolsListing = async (_req: Request, res: Response) => {
     });
     await client.connect(transport);
     const result = await client.request({ method: 'tools/list', params: {} }, ListToolsResultSchema);
-    console.log('[mcp-tools] returning', result.tools.length, 'tools');
+    mcpToolsLog.success(
+      `${style.status('ok', 'success')} ${style.kv('count', result.tools.length)}`,
+      { count: result.tools.length }
+    );
     res.json({ tools: result.tools });
   } catch (e: any) {
-    console.error('[mcp-tools] failed', e);
+    mcpToolsLog.error(
+      `${style.status('fail', 'error')} ${style.kv('error', e?.message || e)}`,
+      e
+    );
     res.status(502).json({ ok: false, error: e?.message || String(e) });
   } finally {
     try {
@@ -284,3 +321,4 @@ registerConnectorOAuthRoutes(app, env);
 registerMcpDcrRoutes(app);
 registerX402Routes(app, env);
 registerSolanaRoutes(app);
+registerStreamSceneRoutes(app, env);

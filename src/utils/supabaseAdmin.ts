@@ -1,3 +1,5 @@
+import { logger, style } from '../logger.js';
+
 type SupabaseSessionResponse = {
   access_token: string;
   token_type: string;
@@ -17,6 +19,8 @@ type SupabaseUserResponse = {
 function normalizeUrl(value: string): string {
   return value.endsWith('/') ? value.slice(0, -1) : value;
 }
+
+const oauthLog = logger.child('oauth-flow');
 
 export async function exchangeRefreshToken(refreshToken: string): Promise<SupabaseSessionResponse> {
   const supabaseUrlRaw = process.env.SUPABASE_URL || '';
@@ -40,12 +44,16 @@ export async function exchangeRefreshToken(refreshToken: string): Promise<Supaba
   if (!response.ok) {
     const text = await response.text().catch(() => 'unknown');
     try {
-      console.error('[oauth-flow]', JSON.stringify({
+      const payload = {
         ts: new Date().toISOString(),
         event: 'supabase_refresh_failed',
         status: response.status,
         body: text.slice(0, 512),
-      }));
+      };
+      oauthLog.error(
+        `${style.status('refresh', 'error')} ${style.kv('status', response.status)} ${style.kv('body', payload.body)}`,
+        payload
+      );
     } catch {}
     throw new Error(`supabase_refresh_failed:${response.status}:${text}`);
   }

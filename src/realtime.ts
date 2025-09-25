@@ -16,6 +16,8 @@ export type CreateRealtimeOpts = {
   model: string;
   identity?: SessionIdentity | null;
   guestProfile?: GuestProfile | null;
+  mcpJwt?: string | null;
+  walletPublicKey?: string | null;
 };
 
 export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtimeOpts) {
@@ -42,7 +44,11 @@ export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtim
     type: 'mcp',
     server_label: 'dexter',
     server_url: env.MCP_URL,
-    headers: env.TOKEN_AI_MCP_TOKEN ? { Authorization: `Bearer ${env.TOKEN_AI_MCP_TOKEN}` } : undefined,
+    headers: opts.mcpJwt
+      ? { Authorization: `Bearer ${opts.mcpJwt}` }
+      : env.TOKEN_AI_MCP_TOKEN
+        ? { Authorization: `Bearer ${env.TOKEN_AI_MCP_TOKEN}` }
+        : undefined,
     require_approval: 'never',
     allowed_tools: allowedVoice.length ? allowedVoice : undefined,
   });
@@ -63,6 +69,12 @@ You are currently operating in demo mode for unauthenticated visitors. Use only 
     instructions: isGuest ? guestInstructions : baseInstructions,
     tools,
   };
+
+  if (opts.walletPublicKey) {
+    body.context = {
+      wallet_public_key: opts.walletPublicKey,
+    };
+  }
 
   const base = (env as any).OPENAI_API_BASE || 'https://api.openai.com';
   const url = `${base.replace(/\/$/, '')}/v1/realtime/sessions`;

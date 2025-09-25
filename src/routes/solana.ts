@@ -3,6 +3,7 @@ import { PublicKey } from '@solana/web3.js';
 import prisma from '../prisma.js';
 import { getSupabaseUserIdFromRequest } from '../utils/supabase.js';
 import { executeBuy, executeSell, listTokenBalances, previewSellAll, resolveToken } from '../solana/tradingService.js';
+import { logger, style } from '../logger.js';
 
 function parseNumber(input: unknown, fallback = 0): number {
   const num = Number(input);
@@ -10,6 +11,7 @@ function parseNumber(input: unknown, fallback = 0): number {
 }
 
 export function registerSolanaRoutes(app: Express) {
+  const log = logger.child('solana');
   app.get('/api/solana/balances', async (req: Request, res: Response) => {
     try {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
@@ -21,14 +23,8 @@ export function registerSolanaRoutes(app: Express) {
       if (!wallet) {
         return res.status(404).json({ ok: false, error: 'wallet_not_found' });
       }
-      if (supabaseUserId) {
-        const link = await prisma.oauth_user_wallets.findFirst({
-          where: { supabase_user_id: supabaseUserId, wallet_public_key: walletAddress },
-          select: { id: true },
-        });
-        if (!link) {
-          return res.status(403).json({ ok: false, error: 'forbidden_wallet' });
-        }
+      if (wallet.assigned_supabase_user_id && wallet.assigned_supabase_user_id !== supabaseUserId) {
+        return res.status(403).json({ ok: false, error: 'forbidden_wallet' });
       }
       const publicKey = new PublicKey(wallet.public_key);
       const balances = await listTokenBalances({
@@ -38,7 +34,7 @@ export function registerSolanaRoutes(app: Express) {
       });
       return res.json({ ok: true, balances, user: supabaseUserId });
     } catch (error: any) {
-      console.error('[solana.balances] error', error);
+      log.error(`${style.status('balances', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(500).json({ ok: false, error: error?.message || 'internal_error' });
     }
   });
@@ -49,7 +45,7 @@ export function registerSolanaRoutes(app: Express) {
       const results = await resolveToken(query, parseNumber(req.query.limit, 5));
       return res.json({ ok: true, results });
     } catch (error: any) {
-      console.error('[solana.resolveToken] error', error);
+      log.error(`${style.status('resolve', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(500).json({ ok: false, error: error?.message || 'internal_error' });
     }
   });
@@ -66,7 +62,7 @@ export function registerSolanaRoutes(app: Express) {
       });
       return res.json({ ok: true, result });
     } catch (error: any) {
-      console.error('[solana.buy] error', error);
+      log.error(`${style.status('buy', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(400).json({ ok: false, error: error?.message || 'trade_failed' });
     }
   });
@@ -84,7 +80,7 @@ export function registerSolanaRoutes(app: Express) {
       });
       return res.json({ ok: true, result });
     } catch (error: any) {
-      console.error('[solana.sell] error', error);
+      log.error(`${style.status('sell', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(400).json({ ok: false, error: error?.message || 'trade_failed' });
     }
   });
@@ -100,7 +96,7 @@ export function registerSolanaRoutes(app: Express) {
       });
       return res.json({ ok: true, result });
     } catch (error: any) {
-      console.error('[solana.previewSell] error', error);
+      log.error(`${style.status('preview', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(400).json({ ok: false, error: error?.message || 'preview_failed' });
     }
   });

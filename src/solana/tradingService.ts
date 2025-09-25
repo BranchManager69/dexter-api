@@ -5,6 +5,7 @@ import { loadManagedWallet } from '../wallets/manager.js';
 import { fetchQuote, fetchSwapTransaction, QuoteResponse } from './jupiter.js';
 import { validateBuyRequest, validateSellRequest } from './txValidator.js';
 import { resolveTokenByQuery, ResolvedTokenItem } from './tokenResolver.js';
+import { logger, style } from '../logger.js';
 
 const RPC_URL = (process.env.SOLANA_RPC_ENDPOINT || 'https://api.mainnet-beta.solana.com').trim();
 const connection = new Connection(RPC_URL, 'confirmed');
@@ -18,6 +19,7 @@ const TREASURY_PUBLIC_KEY = new PublicKey(TREASURY_ADDRESS);
 const FEE_BPS_FREE = Number.parseInt(process.env.DEXTER_PLATFORM_FEE_BPS_FREE || '200', 10);
 const FEE_BPS_PRO = Number.parseInt(process.env.DEXTER_PLATFORM_FEE_BPS_PRO || '0', 10);
 const MAX_WALLETS_PRO = 10;
+const tradeLog = logger.child('solana.trade');
 
 export type UserTier = 'free' | 'pro';
 
@@ -39,12 +41,22 @@ async function getUserTier(supabaseUserId: string | null): Promise<UserTier> {
 
 async function getUserWalletLinks(supabaseUserId: string | null): Promise<UserWalletLink[]> {
   if (!supabaseUserId) return [];
-  const links = await prisma.oauth_user_wallets.findMany({
-    where: { supabase_user_id: supabaseUserId },
-    orderBy: { created_at: 'asc' },
-    select: { wallet_public_key: true, default_wallet: true },
+  const wallets = await prisma.managed_wallets.findMany({
+    where: {
+      assigned_supabase_user_id: supabaseUserId,
+      status: 'assigned',
+    },
+    orderBy: { assigned_at: 'asc' },
+    select: { public_key: true, metadata: true, assigned_at: true },
   });
-  return links.map((link) => ({ walletAddress: link.wallet_public_key, isDefault: link.default_wallet }));
+  return wallets.map((wallet, index) => {
+    const meta = (wallet.metadata as any) ?? {};
+    const metaDefault = typeof meta?.default === 'boolean' ? meta.default : false;
+    return {
+      walletAddress: wallet.public_key,
+      isDefault: metaDefault || index === 0,
+    };
+  });
 }
 
 function selectAccessibleWalletAddress(
@@ -233,7 +245,10 @@ export async function executeBuy(request: BuyRequest): Promise<TradeResult> {
     try {
       await sendLamports(loaded.keypair, TREASURY_PUBLIC_KEY, feeLamports);
     } catch (error) {
-      console.error('[solana.executeBuy] fee transfer failed', error);
+      tradeLog.warn(
+        `${style.status('fee', 'warn')} ${style.kv('operation', 'executeBuy')} ${style.kv('lamports', feeLamports.toString())}`,
+        error
+      );
     }
   }
 
@@ -317,7 +332,10 @@ export async function executeSell(request: SellRequest): Promise<TradeResult> {
     try {
       await sendLamports(loaded.keypair, TREASURY_PUBLIC_KEY, feeLamports);
     } catch (error) {
-      console.error('[solana.executeSell] fee transfer failed', error);
+      tradeLog.warn(
+        `${style.status('fee', 'warn')} ${style.kv('operation', 'executeSell')} ${style.kv('lamports', feeLamports.toString())}`,
+        error
+      );
     }
   }
 

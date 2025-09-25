@@ -17,7 +17,8 @@
     "lint": "eslint . --ext .ts,.tsx || true",
     "x402:test": "node scripts/pay-solana-test.mjs",
     "prisma": "./scripts/prisma.sh",
-    "prisma:status": "./scripts/prisma.sh migrate status --schema prisma/schema.prisma"
+    "prisma:status": "./scripts/prisma.sh migrate status --schema prisma/schema.prisma",
+    "wallets:seed": "tsx scripts/wallets/seed.ts"
   },
   "dependencies": {
     "@openai/agents": "^0.1.0",

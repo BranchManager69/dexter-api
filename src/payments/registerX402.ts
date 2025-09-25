@@ -5,6 +5,7 @@ import { settleResponseFromHeader, type RoutesConfig, type FacilitatorConfig, ty
 import prisma from '../prisma.js';
 import { getSupabaseUserIdFromRequest } from '../utils/supabase.js';
 import type { Env } from '../env.js';
+import { logger, style } from '../logger.js';
 
 const PRO_SUBSCRIBE_ROUTE = '/pro/subscribe';
 const BILLING_PERIOD_DAYS = 30;
@@ -49,6 +50,7 @@ export function registerX402Routes(app: Express, env: Env) {
   app.use(paymentMiddleware(env.X402_PAY_TO as SolanaAddress, routes, facilitator));
 
   app.post(PRO_SUBSCRIBE_ROUTE, async (req: Request, res: Response) => {
+    const log = logger.child('x402.pro-subscribe');
     try {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
       if (!supabaseUserId) {
@@ -66,7 +68,10 @@ export function registerX402Routes(app: Express, env: Env) {
       try {
         decodedPayment = decodePayment(paymentHeader);
       } catch (error) {
-        console.error('[x402/pro-subscribe] failed to decode payment header', error);
+        log.error(
+          `${style.status('decode', 'error')} ${style.kv('stage', 'payment_header')} ${style.kv('error', error instanceof Error ? error.message : error)}`,
+          error
+        );
         res.status(400).json({ ok: false, error: 'payment_decode_failed' });
         return;
       }
@@ -99,7 +104,10 @@ export function registerX402Routes(app: Express, env: Env) {
             try {
               settleResponse = settleResponseFromHeader(paymentResponseHeader);
             } catch (error) {
-              console.error('[x402/pro-subscribe] failed to decode settlement header', error);
+              log.error(
+                `${style.status('decode', 'error')} ${style.kv('stage', 'settlement_header')} ${style.kv('error', error instanceof Error ? error.message : error)}`,
+                error
+              );
             }
           }
 
@@ -126,14 +134,20 @@ export function registerX402Routes(app: Express, env: Env) {
               updated_at: new Date(),
             },
           }).catch((error: unknown) => {
-            console.error('[x402/pro-subscribe] failed to persist subscription', error);
+            log.error(
+              `${style.status('persist', 'error')} ${style.kv('error', error instanceof Error ? error.message : error)}`,
+              error
+            );
           });
         }
       });
 
       res.json(responsePayload);
     } catch (error) {
-      console.error('[x402/pro-subscribe] unexpected error', error);
+      log.error(
+        `${style.status('fail', 'error')} ${style.kv('error', error instanceof Error ? error.message : error)}`,
+        error
+      );
       res.status(500).json({ ok: false, error: 'subscription_error' });
     }
   });

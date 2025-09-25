@@ -2,6 +2,9 @@ import { z } from 'zod';
 import fs from 'fs';
 import path from 'path';
 import dotenv from 'dotenv';
+import { createLogger, style } from './logger.js';
+
+const log = createLogger('env');
 
 // Load only necessary vars from parent repo .env files (without blindly copying)
 function preloadParentEnv() {
@@ -24,6 +27,7 @@ function preloadParentEnv() {
       'SUPABASE_JWT_SECRET',
       'DATABASE_URL',
       'CONNECTOR_CODE_SALT',
+      'STREAM_SCENE_PASSWORD',
     ]);
     for (const key of Array.from(needed)) {
       const current = process.env[key];
@@ -47,11 +51,12 @@ function preloadParentEnv() {
       if (!needed.size) break;
     }
     try {
-      console.log('[env] filled from preload:', filled.join(', ') || '(none)');
+      const filledDisplay = filled.length ? style.list(filled) : style.dim('none');
+      log.info(`${style.status('preload', 'info')} ${style.kv('filled', filledDisplay)}`);
     } catch {}
     if (needed.size) {
       try {
-        console.warn('[env] preload missing values for', Array.from(needed).join(', '));
+        log.warn(`${style.status('missing', 'warn')} ${style.kv('keys', style.list(Array.from(needed)))}`);
       } catch {}
     }
   } catch {}
@@ -63,7 +68,7 @@ try {
   const debugKeys = ['OPENAI_API_KEY', 'TOKEN_AI_MCP_TOKEN', 'DATABASE_URL'];
   for (const key of debugKeys) {
     const value = process.env[key] ?? '';
-    console.log(`[env] ${key} length=${value.length}`);
+    log.debug(`${style.status('length', 'debug')} ${style.kv(key, value.length)}`);
   }
 } catch {}
 
@@ -95,6 +100,7 @@ const envSchema = z.object({
   MCP_ALLOWED_TOOLS_VOICE: z.string().optional().default(''),
   PORT: z.coerce.number().default(3030),
   ALLOWED_ORIGINS: z.string().default('*'),
+  STREAM_SCENE_PASSWORD: z.string().default('0727'),
   SUPABASE_URL: z.string().optional().default(''),
   SUPABASE_ANON_KEY: z.string().optional().default(''),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),
@@ -124,6 +130,7 @@ export function loadEnv(): Env {
     MCP_ALLOWED_TOOLS_VOICE: process.env.MCP_ALLOWED_TOOLS_VOICE,
     PORT: process.env.PORT,
     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
+    STREAM_SCENE_PASSWORD: process.env.STREAM_SCENE_PASSWORD,
     SUPABASE_URL: process.env.SUPABASE_URL,
     SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,

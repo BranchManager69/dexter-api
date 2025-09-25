@@ -4,6 +4,8 @@ import prisma from '../prisma.js';
 import { exchangeRefreshToken, getConnectorTokenTTLSeconds, getSupabaseUserFromAccessToken } from '../utils/supabaseAdmin.js';
 import { issueMcpJwt } from '../utils/mcpJwt.js';
 import type { Env } from '../env.js';
+import { logger, style } from '../logger.js';
+import { ensureUserWallet } from '../wallets/allocator.js';
 
 const CONNECTOR_CODE_SALT = (process.env.CONNECTOR_CODE_SALT || '').trim();
 if (!CONNECTOR_CODE_SALT || CONNECTOR_CODE_SALT.length < 16) {
@@ -25,6 +27,8 @@ const DEFAULT_ALLOWED_CLIENT_IDS = [
   process.env.TOKEN_AI_OIDC_CLIENT_ID || 'cid_a859560609a6448aa2f3a1c29f6ab496',
   process.env.TOKEN_AI_OIDC_CLIENT_ID_CHATGPT || '',
 ].filter((value, index, array) => !!value && array.indexOf(value) === index);
+
+const log = logger.child('connector.oauth');
 
 const allowedRedirects = (() => {
   const extras = (process.env.CONNECTOR_ALLOWED_REDIRECTS || '')
@@ -76,7 +80,10 @@ function registerDefaultPlatform(clientId: string, platform: string) {
   for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
     const [key, template] = entry.split('|');
     if (!key || !template) {
-      console.warn('[connector/oauth] Ignoring CONNECTOR_MOBILE_REDIRECTS entry (expected "id|template")', entry);
+      log.warn(
+        `${style.status('config', 'warn')} ${style.kv('entry', entry)}`,
+        entry
+      );
       continue;
     }
     registerMobileRedirectTemplate(key.trim(), template.trim());
@@ -145,7 +152,10 @@ function buildMobileRedirectUrl(
     if (/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)) {
       return candidate;
     }
-    console.warn('[connector/oauth] Ignoring mobile redirect candidate due to invalid format', { clientId, candidate });
+    log.warn(
+      `${style.status('redirect', 'warn')} ${style.kv('client', clientId)} ${style.kv('candidate', candidate)}`,
+      { clientId, candidate }
+    );
     return null;
   }
 }
@@ -195,7 +205,10 @@ async function cleanupExpired() {
       prisma.connector_oauth_codes.deleteMany({ where: { created_at: { lt: cutoff } } }),
     ]);
   } catch (error) {
-    console.error('[connector/oauth] cleanup failed', (error as Error)?.message || error);
+    log.error(
+      `${style.status('cleanup', 'error')} ${style.kv('error', (error as Error)?.message || error)}`,
+      error
+    );
   }
 }
 
@@ -236,7 +249,7 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
   const seenCodes: Set<string> = new Set();
   function logFlow(event: string, props: Record<string, unknown> = {}) {
     try {
-      const payload = {
+      const payload: Record<string, unknown> = {
         ts: new Date().toISOString(),
         event,
         ip: (props.ip as string) || '',
@@ -244,7 +257,13 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         ...props,
       };
       // Single-line JSON for easy grep
-      console.log('[oauth-flow]', JSON.stringify(payload));
+      const eventName = typeof payload.event === 'string' ? payload.event : '∅';
+      const requestId = typeof payload['request_id'] === 'string' ? (payload['request_id'] as string) : null;
+      const clientId = typeof payload['client_id'] === 'string' ? (payload['client_id'] as string) : null;
+      const parts = [style.kv('event', eventName)];
+      if (requestId) parts.push(style.kv('request', requestId));
+      if (clientId) parts.push(style.kv('client', clientId));
+      log.info(`${style.status('flow', 'info')} ${parts.join(' ')}`, payload);
     } catch {}
   }
   app.get('/api/connector/oauth/authorize', async (req: Request, res: Response) => {
@@ -276,7 +295,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
           dcrAllowed = true;
         }
       } catch (e) {
-        console.warn('[connector/oauth/authorize] DCR lookup failed', (e as Error)?.message || e);
+        log.warn(
+          `${style.status('authorize', 'warn')} ${style.kv('error', (e as Error)?.message || e)}`,
+          e
+        );
       }
       if (!dcrAllowed) {
         return res.status(400).json({ ok: false, error: 'unauthorized_client', message: 'client_id not allowed' });
@@ -302,14 +324,20 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         },
       });
     } catch (error) {
-      console.error('[connector/oauth/authorize] failed to persist request', (error as Error)?.message || error);
+      log.error(
+        `${style.status('authorize', 'error')} ${style.kv('error', (error as Error)?.message || error)}`,
+        error
+      );
       return res.status(500).json({ ok: false, error: 'internal_error' });
     }
 
     const redirect = new URL('/connector/auth', resolveAppBase());
     redirect.searchParams.set('request_id', requestId);
 
-    console.log('[connector/oauth/authorize] issued request', { requestId, clientId, redirect_uri: redirectUri, scope });
+    log.success(
+      `${style.status('ok', 'success')} ${style.kv('request', requestId)} ${style.kv('client', clientId)}`,
+      { requestId, clientId, redirect_uri: redirectUri, scope }
+    );
     logFlow('authorize_issued', {
       request_id: requestId,
       client_id: clientId,
@@ -350,7 +378,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
     try {
       entry = await prisma.connector_oauth_requests.findUnique({ where: { id: requestId } });
     } catch (error) {
-      console.error('[connector/oauth/request] lookup failed', (error as Error)?.message || error);
+      log.error(
+        `${style.status('request', 'error')} ${style.kv('error', (error as Error)?.message || error)}`,
+        error
+      );
       return res.status(500).json({ ok: false, error: 'internal_error' });
     }
     if (!entry) {
@@ -378,7 +409,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
     try {
       requestEntry = await prisma.connector_oauth_requests.findUnique({ where: { id: requestId } });
     } catch (error) {
-      console.error('[connector/oauth/exchange] lookup failed', (error as Error)?.message || error);
+      log.error(
+        `${style.status('exchange', 'error')} ${style.kv('error', (error as Error)?.message || error)}`,
+        error
+      );
       return res.status(500).json({ ok: false, error: 'internal_error' });
     }
     if (!requestEntry) {
@@ -433,14 +467,20 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
           const existing = await prisma.connector_oauth_codes.findUnique({ where: { code } });
           if (!existing) throw e;
         } catch {
-          console.error('[connector/oauth/exchange] failed to create code', e?.message || e);
+          log.error(
+            `${style.status('exchange', 'error')} ${style.kv('error', e?.message || e)}`,
+            e
+          );
           return res.status(500).json({ ok: false, error: 'exchange_failed' });
         }
       }
       // Best-effort cleanup of the request row (don’t fail if already deleted)
       try { await prisma.connector_oauth_requests.deleteMany({ where: { id: requestId } }); } catch {}
 
-      console.log('[connector/oauth/exchange] issued code', { codePreview: code.slice(0, 12), supabaseUserId });
+      log.success(
+        `${style.status('ok', 'success')} ${style.kv('code', `${code.slice(0, 12)}…`)} ${style.kv('client', requestEntry.client_id)}`,
+        { codePreview: code.slice(0, 12), supabaseUserId }
+      );
       logFlow('exchange_issued_code', {
         request_id: requestId,
         code_preview: code.slice(0, 12),
@@ -473,7 +513,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
 
       return res.json(payload);
     } catch (error: any) {
-      console.error('[connector/oauth/exchange] failed', error?.message || error);
+      log.error(
+        `${style.status('exchange', 'error')} ${style.kv('error', error?.message || error)}`,
+        error
+      );
       logFlow('exchange_failed', {
         request_id: requestId,
         error: (error?.message || String(error)),
@@ -495,7 +538,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
       try {
         record = await prisma.connector_oauth_codes.findUnique({ where: { code } });
       } catch (error) {
-        console.error('[connector/oauth/token] lookup failed', (error as Error)?.message || error);
+        log.error(
+          `${style.status('token', 'error')} ${style.kv('stage', 'lookup')} ${style.kv('error', (error as Error)?.message || error)}`,
+          error
+        );
         return res.status(500).json({ error: 'invalid_grant' });
       }
       if (!record) {
@@ -529,6 +575,12 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         const supabaseUserId = refreshed.user?.id || record.supabase_user_id;
         const expiresIn = refreshed.expires_in || record.expires_in || getConnectorTokenTTLSeconds();
 
+        const walletAssignment = supabaseUserId
+          ? await ensureUserWallet(env, {
+              supabaseUserId,
+            })
+          : null;
+
         const body: Record<string, unknown> = {
           token_type: 'bearer',
           access_token: accessToken,
@@ -537,9 +589,13 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
           supabase_user_id: supabaseUserId,
           scope: record.scope || undefined,
         };
-        const dexterMcpJwt = issueMcpJwt(env, {
+        if (walletAssignment?.wallet) {
+          body.wallet_public_key = walletAssignment.wallet.public_key;
+        }
+        const dexterMcpJwt = walletAssignment?.mcpJwt || issueMcpJwt(env, {
           supabase_user_id: supabaseUserId,
           scope: record.scope || null,
+          wallet_public_key: walletAssignment?.wallet.public_key ?? null,
         });
         if (dexterMcpJwt) {
           body.dexter_mcp_jwt = dexterMcpJwt;
@@ -562,7 +618,9 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
           });
           return res.status(400).json({ error: 'invalid_grant' });
         }
-        console.error('[connector/oauth/token] authorization_code failed', msg);
+        log.error(
+          `${style.status('token', 'error')} ${style.kv('grant', 'authorization_code')} ${style.kv('error', msg)}`
+        );
         logFlow('token_code_failed', {
           code_preview: code.slice(0, 12),
           client_id: record.client_id,
@@ -583,6 +641,12 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         const nextRefreshToken = session.refresh_token || refreshToken;
         const supabaseUserId = session.user?.id || null;
         const expiresIn = session.expires_in || getConnectorTokenTTLSeconds();
+        const walletAssignment = supabaseUserId
+          ? await ensureUserWallet(env, {
+              supabaseUserId,
+            })
+          : null;
+
         const body: Record<string, unknown> = {
           token_type: 'bearer',
           access_token: accessToken,
@@ -590,9 +654,13 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
           expires_in: expiresIn,
           supabase_user_id: supabaseUserId,
         };
-        const dexterMcpJwt = issueMcpJwt(env, {
+        if (walletAssignment?.wallet) {
+          body.wallet_public_key = walletAssignment.wallet.public_key;
+        }
+        const dexterMcpJwt = walletAssignment?.mcpJwt || issueMcpJwt(env, {
           supabase_user_id: supabaseUserId,
           scope: null,
+          wallet_public_key: walletAssignment?.wallet.public_key ?? null,
         });
         if (dexterMcpJwt) {
           body.dexter_mcp_jwt = dexterMcpJwt;
@@ -600,7 +668,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         logFlow('token_refresh_success', { supabase_user_id: supabaseUserId });
         return res.json(body);
       } catch (error: any) {
-        console.error('[connector/oauth/token] refresh_token failed', error?.message || error);
+        log.error(
+          `${style.status('token', 'error')} ${style.kv('grant', 'refresh_token')} ${style.kv('error', error?.message || error)}`,
+          error
+        );
         logFlow('token_refresh_failed', { error: (error?.message || String(error)) });
         return res.status(400).json({ error: 'invalid_grant' });
       }
@@ -624,7 +695,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         user_metadata: user.user_metadata || {},
       });
     } catch (error: any) {
-      console.error('[connector/oauth/userinfo] failed', error?.message || error);
+      log.error(
+        `${style.status('userinfo', 'error')} ${style.kv('error', error?.message || error)}`,
+        error
+      );
       return res.status(401).json({ error: 'invalid_token' });
     }
   });

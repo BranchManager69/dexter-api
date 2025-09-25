@@ -1,6 +1,7 @@
 import type { Express, Request, Response } from 'express';
 import prisma from '../prisma.js';
 import { getSupabaseUserIdFromRequest } from '../utils/supabase.js';
+import { logger, style } from '../logger.js';
 
 type SerializedWallet = {
   publicKey: string;
@@ -14,12 +15,7 @@ type SerializedWallet = {
   };
 };
 
-type ManagedWalletRecord = {
-  public_key: string;
-  label: string | null;
-  status: string;
-  metadata: unknown;
-};
+type ManagedWalletRecord = Awaited<ReturnType<typeof prisma.managed_wallets.findMany>>[number];
 
 function serializeWallet(record: ManagedWalletRecord, opts: { isDefault: boolean }): SerializedWallet {
   return {
@@ -36,6 +32,7 @@ function serializeWallet(record: ManagedWalletRecord, opts: { isDefault: boolean
 }
 
 export function registerWalletRoutes(app: Express) {
+  const log = logger.child('wallets.resolver');
   app.get('/api/wallets/resolver', async (req: Request, res: Response) => {
     try {
       const supabaseUserId = await getSupabaseUserIdFromRequest(req);
@@ -43,50 +40,27 @@ export function registerWalletRoutes(app: Express) {
         return res.status(401).json({ ok: false, error: 'authentication_required' });
       }
 
-      const userLinks = await prisma.oauth_user_wallets.findMany({
-        where: { supabase_user_id: supabaseUserId },
-        orderBy: { created_at: 'asc' },
+      const assignedWallets = await prisma.managed_wallets.findMany({
+        where: {
+          assigned_supabase_user_id: supabaseUserId,
+          status: 'assigned',
+        },
+        orderBy: { assigned_at: 'asc' },
       });
 
-      if (!userLinks.length) {
+      if (!assignedWallets.length) {
         return res.json({ ok: true, user: { id: supabaseUserId }, wallets: [] });
       }
 
-      const walletKeySet = new Set<string>();
-      for (const link of userLinks) {
-        if (link.wallet_public_key) {
-          walletKeySet.add(link.wallet_public_key);
-        }
-      }
-      const walletKeys = Array.from(walletKeySet);
-      const wallets = await prisma.managed_wallets.findMany({
-        where: { public_key: { in: walletKeys } },
-      });
+      const defaultWalletKey = assignedWallets[0].public_key;
 
-      const walletByKey = new Map<string, ManagedWalletRecord>();
-      for (const wallet of wallets) {
-        walletByKey.set(wallet.public_key, wallet as unknown as ManagedWalletRecord);
-      }
-
-      let defaultWalletKey = walletKeys[0];
-      for (const link of userLinks) {
-        if (link.default_wallet && link.wallet_public_key) {
-          defaultWalletKey = link.wallet_public_key;
-          break;
-        }
-      }
-
-      const walletsSerialized: SerializedWallet[] = walletKeys
-        .map((key) => {
-          const record = walletByKey.get(key);
-          if (!record) return null;
-          return serializeWallet(record, { isDefault: record.public_key === defaultWalletKey });
-        })
-        .filter(Boolean) as SerializedWallet[];
+      const walletsSerialized: SerializedWallet[] = assignedWallets.map((wallet) =>
+        serializeWallet(wallet, { isDefault: wallet.public_key === defaultWalletKey }),
+      );
 
       return res.json({ ok: true, user: { id: supabaseUserId }, wallets: walletsSerialized });
     } catch (error: any) {
-      console.error('[wallets/resolver] error', error);
+      log.error(`${style.status('resolver', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(500).json({ ok: false, error: 'internal_error' });
     }
   });

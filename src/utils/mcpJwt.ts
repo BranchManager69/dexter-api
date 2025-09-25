@@ -5,6 +5,7 @@ export type McpJwtPayload = {
   supabase_user_id: string | null;
   supabase_email?: string | null;
   scope?: string | null;
+  wallet_public_key?: string | null;
 };
 
 function resolveIssuer(url: string): string {
@@ -45,6 +46,7 @@ export function issueMcpJwt(
     supabase_user_id: supabaseUserId,
     supabase_email: payload.supabase_email ?? null,
     scope: payload.scope ?? null,
+    wallet_public_key: payload.wallet_public_key ?? null,
   };
 
   return jwt.sign(tokenPayload, secret, {

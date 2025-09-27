@@ -18,7 +18,7 @@
     "x402:test": "node scripts/pay-solana-test.mjs",
     "prisma": "./scripts/prisma.sh",
     "prisma:status": "./scripts/prisma.sh migrate status --schema prisma/schema.prisma",
-    "wallets:seed": "tsx scripts/wallets/seed.ts"
+    "wallets:import": "tsx scripts/wallets/import.ts"
   },
   "dependencies": {
     "@openai/agents": "^0.1.0",
@@ -35,17 +35,17 @@
     "openai": "^5.19.1",
     "x402": "^0.6.1",
     "x402-express": "^0.6.1",
+    "yargs": "^18.0.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.10",
-    "@types/node": "^20.14.10",
     "eslint": "^9.9.0",
     "supertest": "^7.0.0",
+    "ts-node": "^10.9.2",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
-    "vitest": "^2.0.5",
-    "ts-node": "^10.9.2"
+    "vitest": "^2.0.5"
   }
 }

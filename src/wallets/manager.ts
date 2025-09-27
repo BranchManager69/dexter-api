@@ -3,14 +3,18 @@ import { Keypair, PublicKey } from '@solana/web3.js';
 import prisma from '../prisma.js';
 
 const ENCRYPTION_KEY_HEX = process.env.WALLET_ENCRYPTION_KEY;
+const PAYLOAD_VERSION = 'dexter_seed_aes256_gcm';
 
 if (!ENCRYPTION_KEY_HEX) {
   throw new Error('WALLET_ENCRYPTION_KEY is required to load managed wallets');
 }
 
+if (!/^[0-9a-fA-F]{64}$/.test(ENCRYPTION_KEY_HEX)) {
+  throw new Error('WALLET_ENCRYPTION_KEY must be 64 hex characters (32 bytes)');
+}
+
 const ENCRYPTION_KEY = Buffer.from(ENCRYPTION_KEY_HEX, 'hex');
 
-// Shared helper adapted from the legacy token-ai trade manager
 function decryptWalletPayload(encryptedJson: string): Buffer {
   let parsed: any;
   try {
@@ -19,56 +23,40 @@ function decryptWalletPayload(encryptedJson: string): Buffer {
     throw new Error('Invalid encrypted wallet payload');
   }
 
-  const version = parsed?.version as string | undefined;
-
-  const performDecrypt = (payload: string, iv: string, tag: string, aad?: string): Buffer => {
-    const decipher = createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, Buffer.from(iv, 'hex'));
-    decipher.setAuthTag(Buffer.from(tag, 'hex'));
-    if (aad) {
-      decipher.setAAD(Buffer.from(aad, 'hex'));
-    }
-    return Buffer.concat([decipher.update(Buffer.from(payload, 'hex')), decipher.final()]);
-  };
-
-  // v2 seed formats (primary path)
-  if (version === 'v2_seed_unified' || version === 'v2_seed' || version === 'v2_seed_vanity') {
-    const decrypted = performDecrypt(parsed.encrypted, parsed.nonce, parsed.authTag, parsed.aad);
-    return Buffer.from(decrypted);
+  if (parsed?.version !== PAYLOAD_VERSION) {
+    throw new Error(`unsupported_wallet_payload_version:${parsed?.version ?? 'unknown'}`);
   }
 
-  // Admin/legacy payloads
-  if (version === 'v2_seed_admin_raw' || version === 'v2_seed_admin') {
-    const payload = parsed.encrypted_payload ?? parsed.encrypted;
-    if (!payload || !parsed.iv || !parsed.tag) {
-      throw new Error(`Encrypted wallet payload missing required fields for ${version}`);
-    }
-    const decrypted = performDecrypt(payload, parsed.iv, parsed.tag, parsed.aad);
-    if (decrypted.length === 64) {
-      return decrypted.subarray(0, 32);
-    }
-    if (decrypted.length === 32) {
-      return decrypted;
-    }
-    throw new Error(`Unexpected decrypted payload length ${decrypted.length} for ${version}`);
+  const ciphertext = typeof parsed.ciphertext === 'string' ? parsed.ciphertext : null;
+  const iv = typeof parsed.iv === 'string' ? parsed.iv : null;
+  const tag = typeof parsed.tag === 'string' ? parsed.tag : null;
+  const aad = typeof parsed.aad === 'string' && parsed.aad ? parsed.aad : null;
+
+  if (!ciphertext || !iv || !tag) {
+    throw new Error('encrypted wallet payload missing ciphertext, iv, or tag');
   }
 
-  // Generic AES-GCM JSON (no version field)
-  if (!version && (parsed.encrypted_payload || parsed.encrypted)) {
-    const payload = parsed.encrypted_payload ?? parsed.encrypted;
-    if (!payload || !parsed.iv || !parsed.tag) {
-      throw new Error('Generic encrypted wallet payload missing required fields');
-    }
-    const decrypted = performDecrypt(payload, parsed.iv, parsed.tag, parsed.aad);
-    if (decrypted.length === 64) {
-      return decrypted.subarray(0, 32);
-    }
-    if (decrypted.length === 32) {
-      return decrypted;
-    }
-    throw new Error(`Unexpected decrypted payload length ${decrypted.length}`);
+  const ivBuffer = Buffer.from(iv, 'hex');
+  if (ivBuffer.length !== 12 && ivBuffer.length !== 16) {
+    throw new Error('wallet payload iv must be 12 or 16 bytes');
   }
 
-  throw new Error(`Unsupported wallet payload version: ${version ?? 'unknown'}`);
+  const decipher = createDecipheriv('aes-256-gcm', ENCRYPTION_KEY, ivBuffer);
+  decipher.setAuthTag(Buffer.from(tag, 'hex'));
+  if (aad) {
+    decipher.setAAD(Buffer.from(aad, 'hex'));
+  }
+
+  const decrypted = Buffer.concat([
+    decipher.update(Buffer.from(ciphertext, 'hex')),
+    decipher.final(),
+  ]);
+
+  if (decrypted.length !== 32) {
+    throw new Error(`wallet_seed_invalid_length:${decrypted.length}`);
+  }
+
+  return decrypted;
 }
 
 export interface LoadedWallet {

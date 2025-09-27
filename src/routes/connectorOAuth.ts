@@ -398,8 +398,11 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
   app.post('/api/connector/oauth/exchange', async (req: Request, res: Response) => {
     await cleanupExpired();
 
+    const body = (req.body && typeof req.body === 'object') ? req.body as Record<string, unknown> : {};
     const requestId = getParam(req, 'request_id').trim();
     const refreshToken = getParam(req, 'refresh_token').trim();
+    const accessTokenRaw = typeof body.access_token === 'string' ? body.access_token : '';
+    const supabaseUserIdRaw = typeof body.supabase_user_id === 'string' ? body.supabase_user_id : '';
 
     if (!requestId || !refreshToken) {
       return res.status(400).json({ ok: false, error: 'invalid_request' });
@@ -439,9 +442,9 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
       seenRequestIds.add(requestId);
       // Do NOT refresh here. Store the supplied refresh_token and issue a code.
       // Actual refresh happens once during authorization_code exchange to avoid single-use token errors.
-      const accessToken = '';
+      const accessToken = accessTokenRaw?.trim?.() || '';
       const nextRefreshToken = refreshToken;
-      const supabaseUserId = null;
+      const supabaseUserId = supabaseUserIdRaw?.trim?.() || null;
       const expiresIn = getConnectorTokenTTLSeconds();
       // Deterministic code to make exchange idempotent by request_id
       const code = deterministicCodeFromRequestId(requestId);
@@ -568,18 +571,55 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
       }
 
       try {
-        await prisma.connector_oauth_codes.delete({ where: { code } });
-        const refreshed = await exchangeRefreshToken(record.refresh_token);
-        const accessToken = refreshed.access_token;
-        const refreshToken = refreshed.refresh_token || record.refresh_token;
-        const supabaseUserId = refreshed.user?.id || record.supabase_user_id;
-        const expiresIn = refreshed.expires_in || record.expires_in || getConnectorTokenTTLSeconds();
+        let supabaseUserId = record.supabase_user_id || null;
+        let accessToken = record.access_token || '';
+        let refreshToken = record.refresh_token;
+        let expiresIn = record.expires_in || getConnectorTokenTTLSeconds();
 
-        const walletAssignment = supabaseUserId
-          ? await ensureUserWallet(env, {
-              supabaseUserId,
-            })
-          : null;
+        let refreshed: Awaited<ReturnType<typeof exchangeRefreshToken>> | null = null;
+        try {
+          refreshed = await exchangeRefreshToken(record.refresh_token);
+        } catch (refreshError: any) {
+          const msg = refreshError?.message || String(refreshError);
+          const isRefreshMissing = typeof msg === 'string' && msg.includes('supabase_refresh_failed');
+          if (!isRefreshMissing) {
+            throw refreshError;
+          }
+          if (!supabaseUserId && accessToken) {
+            try {
+              const userInfo = await getSupabaseUserFromAccessToken(accessToken);
+              supabaseUserId = userInfo.id || supabaseUserId;
+            } catch (userErr) {
+              log.warn(
+                `${style.status('token', 'warn')} ${style.kv('grant', 'authorization_code')} ${style.kv('fallback', 'user_lookup_failed')} ${style.kv('error', (userErr as Error)?.message || userErr)}`,
+                userErr
+              );
+            }
+          }
+          if (!supabaseUserId || !accessToken) {
+            throw refreshError;
+          }
+          log.warn(
+            `${style.status('token', 'warn')} ${style.kv('grant', 'authorization_code')} ${style.kv('fallback', 'using_stored_session')} ${style.kv('error', msg)}`
+          );
+        }
+
+        if (refreshed) {
+          accessToken = refreshed.access_token;
+          refreshToken = refreshed.refresh_token || refreshToken;
+          supabaseUserId = refreshed.user?.id || supabaseUserId;
+          expiresIn = refreshed.expires_in || expiresIn;
+        }
+
+        await prisma.connector_oauth_codes.delete({ where: { code } }).catch(() => null);
+
+        if (!supabaseUserId) {
+          throw new Error('supabase_user_missing');
+        }
+
+        const walletAssignment = await ensureUserWallet(env, {
+          supabaseUserId,
+        });
 
         const body: Record<string, unknown> = {
           token_type: 'bearer',

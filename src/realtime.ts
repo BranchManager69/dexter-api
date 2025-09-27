@@ -70,12 +70,6 @@ You are currently operating in demo mode for unauthenticated visitors. Use only 
     tools,
   };
 
-  if (opts.walletPublicKey) {
-    body.context = {
-      wallet_public_key: opts.walletPublicKey,
-    };
-  }
-
   const base = (env as any).OPENAI_API_BASE || 'https://api.openai.com';
   const url = `${base.replace(/\/$/, '')}/v1/realtime/sessions`;
   const r = await fetch(url, {

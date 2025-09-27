@@ -37,17 +37,24 @@ export function issueMcpJwt(
   const supabaseUserId = payload.supabase_user_id ?? null;
   const subject = supabaseUserId && typeof supabaseUserId === 'string' ? supabaseUserId : 'guest';
 
-  const tokenPayload = {
+  const tokenPayload: Record<string, any> = {
     iss: resolveIssuer(env.MCP_URL),
     aud: resolveIssuer(env.MCP_URL),
     iat: nowSeconds,
     exp: nowSeconds + ttlSeconds,
     sub: subject,
     supabase_user_id: supabaseUserId,
-    supabase_email: payload.supabase_email ?? null,
-    scope: payload.scope ?? null,
-    wallet_public_key: payload.wallet_public_key ?? null,
   };
+
+  if (payload.supabase_email) {
+    tokenPayload.supabase_email = payload.supabase_email;
+  }
+  if (payload.scope) {
+    tokenPayload.scope = payload.scope;
+  }
+  if (payload.wallet_public_key) {
+    tokenPayload.wallet_public_key = payload.wallet_public_key;
+  }
 
   return jwt.sign(tokenPayload, secret, {
     algorithm: 'HS256',

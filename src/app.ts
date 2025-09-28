@@ -650,3 +650,16 @@ app.post('/health/full', async (req, res) => {
 
   res.json(payload);
 });
+
+app.get('/health/deep', (_req, res) => {
+  try {
+    const raw = fs.readFileSync(HEALTH_CACHE_PATH, 'utf-8');
+    const parsed = JSON.parse(raw);
+    return res.json({ ok: true, cached: true, snapshot: parsed });
+  } catch (error: any) {
+    const message = error?.code === 'ENOENT'
+      ? 'No deep health snapshot recorded yet'
+      : (error?.message || String(error));
+    return res.status(error?.code === 'ENOENT' ? 404 : 500).json({ ok: false, error: message });
+  }
+});

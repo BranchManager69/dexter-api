@@ -52,41 +52,20 @@ function normalizeIdentity(input: SessionIdentity): SessionIdentity {
 
 const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 
-const healthAdminEmails = new Set(
-  (env.HEALTH_ADMIN_EMAILS || '')
-    .split(',')
-    .map((value) => value.trim().toLowerCase())
-    .filter(Boolean)
-);
+const ADMIN_ROLES = new Set(['admin', 'superadmin']);
 
-function isAdminUser(user: { email?: string | null; user_metadata?: Record<string, unknown> | null; app_metadata?: Record<string, unknown> | null }): boolean {
+function extractRoles(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) return value.map((entry) => String(entry).toLowerCase());
+  if (typeof value === 'string') return [value.toLowerCase()];
+  return [];
+}
+
+function isAdminUser(user: { app_metadata?: Record<string, unknown> | null }): boolean {
   if (!user) return false;
-
-  const email = user.email?.toLowerCase() ?? '';
-  if (email && healthAdminEmails.has(email)) return true;
-
-  const userMeta = (user.user_metadata ?? {}) as Record<string, unknown>;
   const appMeta = (user.app_metadata ?? {}) as Record<string, unknown>;
-
-  const boolFlags = [
-    userMeta.admin,
-    userMeta.is_admin,
-    appMeta.admin,
-    appMeta.is_admin,
-  ];
-  if (boolFlags.some(Boolean)) return true;
-
-  const collectRoles = (value: unknown): string[] => {
-    if (!value) return [];
-    if (Array.isArray(value)) return value.map((entry) => String(entry).toLowerCase());
-    if (typeof value === 'string') return [value.toLowerCase()];
-    return [];
-  };
-
-  const roles = new Set<string>([...collectRoles(userMeta.roles), ...collectRoles(appMeta.roles)]);
-  if (roles.has('admin') || roles.has('superadmin')) return true;
-
-  return false;
+  const roles = extractRoles(appMeta.roles);
+  return roles.some((role) => ADMIN_ROLES.has(role));
 }
 
 function mergeContentSecurityPolicy(existing: undefined | string | string[] | number): string {

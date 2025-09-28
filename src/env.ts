@@ -29,7 +29,6 @@ function preloadParentEnv() {
       'CONNECTOR_CODE_SALT',
       'STREAM_SCENE_PASSWORD',
       'HEALTH_PROBE_TOKEN',
-      'HEALTH_ADMIN_EMAILS',
     ]);
     for (const key of Array.from(needed)) {
       const current = process.env[key];
@@ -104,7 +103,6 @@ const envSchema = z.object({
   ALLOWED_ORIGINS: z.string().default('*'),
   STREAM_SCENE_PASSWORD: z.string().default('0727'),
   HEALTH_PROBE_TOKEN: z.string().optional().default(''),
-  HEALTH_ADMIN_EMAILS: z.string().optional().default(''),
   SUPABASE_URL: z.string().optional().default(''),
   SUPABASE_ANON_KEY: z.string().optional().default(''),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),
@@ -136,7 +134,6 @@ export function loadEnv(): Env {
     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
     STREAM_SCENE_PASSWORD: process.env.STREAM_SCENE_PASSWORD,
     HEALTH_PROBE_TOKEN: process.env.HEALTH_PROBE_TOKEN,
-    HEALTH_ADMIN_EMAILS: process.env.HEALTH_ADMIN_EMAILS,
     SUPABASE_URL: process.env.SUPABASE_URL,
     SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,

@@ -52,6 +52,43 @@ function normalizeIdentity(input: SessionIdentity): SessionIdentity {
 
 const TURNSTILE_ORIGIN = 'https://challenges.cloudflare.com';
 
+const healthAdminEmails = new Set(
+  (env.HEALTH_ADMIN_EMAILS || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean)
+);
+
+function isAdminUser(user: { email?: string | null; user_metadata?: Record<string, unknown> | null; app_metadata?: Record<string, unknown> | null }): boolean {
+  if (!user) return false;
+
+  const email = user.email?.toLowerCase() ?? '';
+  if (email && healthAdminEmails.has(email)) return true;
+
+  const userMeta = (user.user_metadata ?? {}) as Record<string, unknown>;
+  const appMeta = (user.app_metadata ?? {}) as Record<string, unknown>;
+
+  const boolFlags = [
+    userMeta.admin,
+    userMeta.is_admin,
+    appMeta.admin,
+    appMeta.is_admin,
+  ];
+  if (boolFlags.some(Boolean)) return true;
+
+  const collectRoles = (value: unknown): string[] => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value.map((entry) => String(entry).toLowerCase());
+    if (typeof value === 'string') return [value.toLowerCase()];
+    return [];
+  };
+
+  const roles = new Set<string>([...collectRoles(userMeta.roles), ...collectRoles(appMeta.roles)]);
+  if (roles.has('admin') || roles.has('superadmin')) return true;
+
+  return false;
+}
+
 function mergeContentSecurityPolicy(existing: undefined | string | string[] | number): string {
   const normalizeExisting = (): string => {
     if (Array.isArray(existing)) return existing.join('; ');
@@ -608,6 +645,31 @@ async function handleHealthFull(req: Request, res: Response) {
   const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
   if (headerToken !== env.HEALTH_PROBE_TOKEN && queryToken !== env.HEALTH_PROBE_TOKEN) {
     return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+
+  const authorization = (req.headers['authorization'] || req.headers['Authorization']) as string | undefined;
+  if (!authorization || !authorization.toLowerCase().startsWith('bearer ')) {
+    return res.status(403).json({ ok: false, error: 'admin_required' });
+  }
+
+  const accessToken = authorization.split(' ')[1]?.trim();
+  if (!accessToken) {
+    return res.status(403).json({ ok: false, error: 'admin_required' });
+  }
+
+  let requesterUser: any = null;
+  try {
+    requesterUser = await getSupabaseUserFromAccessToken(accessToken);
+  } catch (error: any) {
+    healthLog.warn(
+      `${style.status('auth', 'warn')} ${style.kv('error', error?.message || error)}`,
+      error
+    );
+    return res.status(403).json({ ok: false, error: 'admin_required' });
+  }
+
+  if (!isAdminUser(requesterUser)) {
+    return res.status(403).json({ ok: false, error: 'admin_required' });
   }
 
   const SUPABASE_URL = process.env.SUPABASE_URL || '';

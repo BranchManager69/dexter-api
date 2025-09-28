@@ -1,6 +1,9 @@
 import 'dotenv/config';
 import express from 'express';
 import type { Request, Response } from 'express';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { loadEnv } from './env.js';
 import { Agent, hostedMcpTool, Runner } from '@openai/agents-core';
 import { OpenAIProvider, setDefaultOpenAIKey } from '@openai/agents-openai';
@@ -12,6 +15,7 @@ import { buildSpecialistAgents } from './agents.js';
 import { createRealtimeSessionWithEnv, type SessionIdentity } from './realtime.js';
 import { ensureUserWallet } from './wallets/allocator.js';
 import { getSupabaseUserFromAccessToken } from './utils/supabaseAdmin.js';
+import prisma from './prisma.js';
 
 import { registerAuthConfigRoute } from './routes/authConfig.js';
 import { registerWalletRoutes } from './routes/wallets.js';
@@ -29,6 +33,7 @@ app.use(express.json({ limit: '2mb' }));
 
 const realtimeLog = logger.child('realtime.sessions');
 const mcpToolsLog = logger.child('mcp-tools');
+const healthLog = logger.child('health.probe');
 
 function normalizeIdentity(input: SessionIdentity): SessionIdentity {
   if (input.sessionType === 'user') {
@@ -322,3 +327,326 @@ registerMcpDcrRoutes(app);
 registerX402Routes(app, env);
 registerSolanaRoutes(app);
 registerStreamSceneRoutes(app, env);
+
+const CONNECTOR_PROBE_TARGETS = [
+  {
+    name: 'alexa',
+    displayName: 'Amazon Alexa',
+    redirectCandidates: [
+      'https://pitangui.amazon.com/api/skill/link/M28N0DJM2U0LFQ',
+      'https://pitangui.amazon.com/api/skill/link/amzn1.ask.skill.b4347dae-06f3-415c-b5d0-12f68537241d',
+    ],
+  },
+  {
+    name: 'chatgpt',
+    displayName: 'ChatGPT Connector',
+    redirectCandidates: ['https://chatgpt.com/connector_platform_oauth_redirect'],
+  },
+  {
+    name: 'claude',
+    displayName: 'Claude Connector',
+    redirectCandidates: ['https://claude.ai/api/mcp/auth_callback'],
+  },
+] as const;
+
+const HEALTH_CACHE_PATH = path.join(
+  process.env.HOME || '/home/branchmanager',
+  '.codex',
+  'dexter-health.json'
+);
+
+type ConnectorProbeTarget = (typeof CONNECTOR_PROBE_TARGETS)[number];
+
+type ConnectorProbeResult = {
+  ok: boolean;
+  duration_ms: number;
+  client_id: string | null;
+  redirect_uri: string | null;
+  request_id: string | null;
+  code: string | null;
+  supabase_user_id: string | null;
+  error?: string;
+};
+
+type RealtimeProbeResult = {
+  ok: boolean;
+  duration_ms: number;
+  error?: string;
+  session?: {
+    id: string;
+    model: string;
+    modalities?: unknown;
+    expires_at?: number;
+  };
+};
+
+async function probeRealtime(): Promise<RealtimeProbeResult> {
+  const start = Date.now();
+  if (!env.OPENAI_API_KEY) {
+    return {
+      ok: false,
+      duration_ms: Date.now() - start,
+      error: 'OPENAI_API_KEY not configured',
+    };
+  }
+  try {
+    const out = await createRealtimeSessionWithEnv(env, {
+      apiKey: env.OPENAI_API_KEY,
+      model: env.OPENAI_REALTIME_MODEL,
+      guestProfile: {
+        label: 'health-check',
+        instructions: 'Run connectivity diagnostics and terminate.',
+      },
+    });
+    return {
+      ok: true,
+      duration_ms: Date.now() - start,
+      session: {
+        id: out?.id ?? 'unknown',
+        model: out?.model ?? env.OPENAI_REALTIME_MODEL,
+        modalities: out?.modalities ?? null,
+        expires_at: out?.expires_at ?? null,
+      },
+    };
+  } catch (error: any) {
+    const message = error?.message || String(error);
+    healthLog.error(
+      `${style.status('realtime', 'error')} ${style.kv('error', message)}`,
+      error
+    );
+    return {
+      ok: false,
+      duration_ms: Date.now() - start,
+      error: message,
+    };
+  }
+}
+
+async function findConnectorClient(target: ConnectorProbeTarget): Promise<{
+  client_id: string;
+  redirect_uri: string;
+} | null> {
+  for (const candidate of target.redirectCandidates) {
+    const match = await prisma.mcp_oauth_clients.findFirst({
+      where: {
+        redirect_uris: {
+          array_contains: candidate,
+        },
+      },
+      orderBy: { created_at: 'desc' },
+    });
+    if (match) {
+      return { client_id: match.client_id, redirect_uri: candidate };
+    }
+  }
+  return null;
+}
+
+type ProbeUser = {
+  userId: string;
+  email: string;
+  password: string;
+  refreshToken: string;
+};
+
+async function createProbeUser(label: string): Promise<ProbeUser> {
+  const SUPABASE_URL = process.env.SUPABASE_URL || '';
+  const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    throw new Error('Supabase service credentials are not configured');
+  }
+  const adminHeaders = {
+    apikey: SERVICE_KEY,
+    authorization: `Bearer ${SERVICE_KEY}`,
+    'content-type': 'application/json',
+  };
+  const uniq = crypto.randomBytes(6).toString('hex');
+  const email = `health_${label}_${uniq}@dexter.cash`;
+  const password = `Hp_${crypto.randomBytes(12).toString('hex')}`;
+
+  const createResp = await fetch(`${SUPABASE_URL}/auth/v1/admin/users`, {
+    method: 'POST',
+    headers: adminHeaders,
+    body: JSON.stringify({ email, password, email_confirm: true }),
+  });
+  const createJson = await createResp.json().catch(() => null);
+  if (!createResp.ok) {
+    throw new Error(`supabase_admin_create_failed:${createResp.status}`);
+  }
+  const userId = createJson?.user?.id || createJson?.id;
+  if (!userId) {
+    throw new Error('supabase_admin_create_missing_user_id');
+  }
+
+  const signResp = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: adminHeaders,
+    body: JSON.stringify({ email, password }),
+  });
+  const signJson = await signResp.json().catch(() => null);
+  if (!signResp.ok) {
+    throw new Error(`supabase_password_signin_failed:${signResp.status}`);
+  }
+  const refreshToken = signJson?.refresh_token;
+  if (!refreshToken) {
+    throw new Error('supabase_missing_refresh_token');
+  }
+
+  return { userId, email, password, refreshToken };
+}
+
+async function deleteProbeUser(user: ProbeUser | null) {
+  if (!user) return;
+  const SUPABASE_URL = process.env.SUPABASE_URL || '';
+  const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  if (!SUPABASE_URL || !SERVICE_KEY) return;
+  try {
+    await fetch(`${SUPABASE_URL}/auth/v1/admin/users/${user.userId}`, {
+      method: 'DELETE',
+      headers: {
+        apikey: SERVICE_KEY,
+        authorization: `Bearer ${SERVICE_KEY}`,
+      },
+    });
+  } catch (err) {
+    healthLog.warn(
+      `${style.status('cleanup', 'warn')} ${style.kv('user', user.userId)} ${style.kv('error', err instanceof Error ? err.message : String(err))}`
+    );
+  }
+}
+
+async function probeConnector(target: ConnectorProbeTarget): Promise<ConnectorProbeResult> {
+  const start = Date.now();
+  const apiBase = `http://127.0.0.1:${env.PORT}/api/`;
+  const result: ConnectorProbeResult = {
+    ok: false,
+    duration_ms: 0,
+    client_id: null,
+    redirect_uri: null,
+    request_id: null,
+    code: null,
+    supabase_user_id: null,
+  };
+  let user: ProbeUser | null = null;
+  try {
+    const client = await findConnectorClient(target);
+    if (!client) {
+      throw new Error('client_not_found');
+    }
+    result.client_id = client.client_id;
+    result.redirect_uri = client.redirect_uri;
+
+    user = await createProbeUser(target.name);
+
+    const authorizeUrl = new URL('connector/oauth/authorize', apiBase);
+    authorizeUrl.searchParams.set('client_id', client.client_id);
+    authorizeUrl.searchParams.set('redirect_uri', client.redirect_uri);
+    authorizeUrl.searchParams.set('response_type', 'code');
+    authorizeUrl.searchParams.set('response_mode', 'json');
+    authorizeUrl.searchParams.set('scope', 'wallet.read wallet.trade openid');
+    authorizeUrl.searchParams.set('state', `health-${target.name}-${Date.now()}`);
+
+    const authResp = await fetch(authorizeUrl.toString());
+    const authJson = await authResp.json().catch(() => null);
+    if (!authResp.ok || !authJson?.request_id) {
+      throw new Error(`authorize_failed:${authResp.status}`);
+    }
+    result.request_id = String(authJson.request_id).slice(0, 24);
+
+    const exchangeResp = await fetch(new URL('connector/oauth/exchange', apiBase).toString(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ request_id: authJson.request_id, refresh_token: user.refreshToken }),
+    });
+    const exchangeJson = await exchangeResp.json().catch(() => null);
+    if (!exchangeResp.ok || !exchangeJson?.code) {
+      throw new Error(`exchange_failed:${exchangeResp.status}`);
+    }
+    result.code = String(exchangeJson.code).slice(0, 24);
+
+    const tokenResp = await fetch(new URL('connector/oauth/token', apiBase).toString(), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ grant_type: 'authorization_code', code: exchangeJson.code }),
+    });
+    const tokenJson = await tokenResp.json().catch(() => null);
+    if (!tokenResp.ok || !tokenJson?.access_token) {
+      throw new Error(`token_failed:${tokenResp.status}`);
+    }
+    result.supabase_user_id = tokenJson?.supabase_user_id ?? null;
+
+    const userinfoResp = await fetch(new URL('connector/oauth/userinfo', apiBase).toString(), {
+      headers: { Authorization: `Bearer ${tokenJson.access_token}` },
+    });
+    if (!userinfoResp.ok) {
+      throw new Error(`userinfo_failed:${userinfoResp.status}`);
+    }
+
+    result.ok = true;
+  } catch (error: any) {
+    const message = error?.message || String(error);
+    result.error = message;
+    healthLog.error(
+      `${style.status('connector', 'error')} ${style.kv('target', target.name)} ${style.kv('error', message)}`,
+      error
+    );
+  } finally {
+    result.duration_ms = Date.now() - start;
+    await deleteProbeUser(user);
+  }
+  return result;
+}
+
+app.post('/health/full', async (req, res) => {
+  if (!env.HEALTH_PROBE_TOKEN) {
+    return res.status(503).json({ ok: false, error: 'HEALTH_PROBE_TOKEN not configured' });
+  }
+
+  const headerToken = Array.isArray(req.headers['x-health-token'])
+    ? req.headers['x-health-token'][0]
+    : (req.headers['x-health-token'] as string | undefined);
+  const queryToken = typeof req.query.token === 'string' ? req.query.token : undefined;
+  if (headerToken !== env.HEALTH_PROBE_TOKEN && queryToken !== env.HEALTH_PROBE_TOKEN) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+
+  const SUPABASE_URL = process.env.SUPABASE_URL || '';
+  const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+  if (!SUPABASE_URL || !SERVICE_KEY) {
+    return res.status(500).json({
+      ok: false,
+      error: 'Supabase service credentials are not configured',
+    });
+  }
+
+  const started = Date.now();
+  const realtime = await probeRealtime();
+  const connectors: Record<string, ConnectorProbeResult> = {};
+  for (const target of CONNECTOR_PROBE_TARGETS) {
+    connectors[target.name] = await probeConnector(target);
+  }
+
+  const allOk =
+    realtime.ok &&
+    Object.values(connectors).every((c) => c.ok);
+
+  const payload = {
+    ok: allOk,
+    service: 'dexter-health',
+    timestamp: new Date().toISOString(),
+    duration_ms: Date.now() - started,
+    realtime,
+    connectors,
+  };
+
+  try {
+    fs.mkdirSync(path.dirname(HEALTH_CACHE_PATH), { recursive: true });
+    fs.writeFileSync(HEALTH_CACHE_PATH, JSON.stringify(payload, null, 2));
+  } catch (err) {
+    healthLog.warn(
+      `${style.status('cache', 'warn')} ${style.kv('path', HEALTH_CACHE_PATH)} ${style.kv('error', err instanceof Error ? err.message : String(err))}`
+    );
+  }
+
+  res.json(payload);
+});

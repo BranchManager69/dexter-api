@@ -24,6 +24,7 @@ import { registerMcpDcrRoutes } from './routes/mcpDcr.js';
 import { registerX402Routes } from './payments/registerX402.js';
 import { registerSolanaRoutes } from './routes/solana.js';
 import { registerStreamSceneRoutes } from './routes/streamScenes.js';
+import { registerPromptModuleRoutes } from './routes/promptModules.js';
 import { logger, style } from './logger.js';
 
 export const env = loadEnv();
@@ -337,12 +338,13 @@ app.get('/tools', handleToolsListing);
 app.get('/api/tools', handleToolsListing);
 
 registerAuthConfigRoute(app);
-registerWalletRoutes(app);
+registerWalletRoutes(app, env);
 registerConnectorOAuthRoutes(app, env);
 registerMcpDcrRoutes(app);
 registerX402Routes(app, env);
 registerSolanaRoutes(app);
 registerStreamSceneRoutes(app, env);
+registerPromptModuleRoutes(app);
 
 const CONNECTOR_PROBE_TARGETS = [
   {

@@ -143,16 +143,31 @@ async function submitSwapTransaction(base64: string, signer: Keypair): Promise<s
 
 export interface TokenBalanceItem {
   mint: string;
-  ata: string;
+  ata: string | null;
   amountRaw: string;
   amountUi: number;
   decimals: number;
+  isNative?: boolean;
 }
 
 export async function listTokenBalances(options: { walletPublicKey: PublicKey; minimumUi?: number; limit?: number }): Promise<TokenBalanceItem[]> {
-  const splAccounts = await connection.getParsedTokenAccountsByOwner(options.walletPublicKey, { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') });
   const items: TokenBalanceItem[] = [];
+
+  const lamports = await connection.getBalance(options.walletPublicKey, 'confirmed');
+  const solAmount = lamports / LAMPORTS_PER_SOL;
   const minUi = options.minimumUi ?? 0;
+  if (solAmount > minUi) {
+    items.push({
+      mint: 'native:SOL',
+      ata: null,
+      amountRaw: String(lamports),
+      amountUi: solAmount,
+      decimals: 9,
+      isNative: true,
+    });
+  }
+
+  const splAccounts = await connection.getParsedTokenAccountsByOwner(options.walletPublicKey, { programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA') });
   for (const entry of splAccounts.value) {
     const info = (entry.account.data as any)?.parsed?.info;
     const tokenAmount = info?.tokenAmount;

@@ -12,6 +12,7 @@ function parseNumber(input: unknown, fallback = 0): number {
 
 const DEXSCREENER_TOKENS_ENDPOINT = 'https://api.dexscreener.com/latest/dex/tokens';
 const DEXSCREENER_BATCH_SIZE = 25;
+const WRAPPED_SOL_MINT = 'So11111111111111111111111111111111111111112';
 
 interface TokenMetadata {
   address: string;
@@ -194,16 +195,86 @@ export function registerSolanaRoutes(app: Express) {
         limit: parseNumber(req.query.limit, 10),
       });
       let enriched = balances;
+      let solPriceUsd: number | null = null;
       try {
-        const metadataMap = await fetchTokenMetadataFromDexScreener(balances.map((item) => item.mint));
+        const metadataRequest = balances.map((item) => item.mint);
+        if (balances.some((item) => item.isNative)) {
+          metadataRequest.push(WRAPPED_SOL_MINT);
+        }
+        const metadataMap = await fetchTokenMetadataFromDexScreener(metadataRequest);
+        const wrappedSol = metadataMap.get(WRAPPED_SOL_MINT);
+        if (wrappedSol) {
+          const mergedSol = mergeTokenMetadata(
+            { ...NATIVE_SOL_METADATA },
+            { ...wrappedSol, address: 'native:SOL' },
+            wrappedSol.liquidityUsd,
+          );
+          metadataMap.set('native:SOL', mergedSol);
+          if (typeof mergedSol.priceUsd === 'number' && Number.isFinite(mergedSol.priceUsd)) {
+            solPriceUsd = mergedSol.priceUsd;
+          }
+        }
         enriched = balances.map((item) => {
-          const metadata = item.isNative ? NATIVE_SOL_METADATA : metadataMap.get(item.mint);
+          const metadata = metadataMap.get(item.mint) || (item.isNative ? NATIVE_SOL_METADATA : undefined);
           return metadata ? { ...item, token: metadata } : item;
         });
       } catch (metadataError) {
         log.warn('[solana-balances] metadata enrichment failed', metadataError);
       }
-      return res.json({ ok: true, balances: enriched, user: supabaseUserId });
+
+      const withPortfolio = enriched.map((item) => {
+        const priceUsd = typeof (item as any)?.token?.priceUsd === 'number' ? (item as any).token.priceUsd : undefined;
+        const numericPriceUsd = Number.isFinite(priceUsd) ? priceUsd : undefined;
+        const valueUsd = numericPriceUsd !== undefined ? item.amountUi * numericPriceUsd : undefined;
+        const priceChangePct = typeof (item as any)?.token?.priceChange24h === 'number' ? (item as any).token.priceChange24h : undefined;
+        const changeUsd24h =
+          valueUsd !== undefined && priceChangePct !== undefined
+            ? (valueUsd * priceChangePct) / 100
+            : undefined;
+        return {
+          ...item,
+          portfolio: {
+            valueUsd: valueUsd ?? null,
+            valueSol:
+              valueUsd !== undefined && solPriceUsd && Number.isFinite(solPriceUsd) && solPriceUsd > 0
+                ? valueUsd / solPriceUsd
+                : null,
+            sharePercent: null,
+            changeUsd24h: changeUsd24h ?? null,
+          },
+        };
+      });
+
+      const totalValueUsd = withPortfolio.reduce((acc, item) => acc + (item.portfolio?.valueUsd ?? 0), 0);
+      const pricedCount = withPortfolio.filter((item) => item.portfolio?.valueUsd != null).length;
+      const unpricedCount = withPortfolio.length - pricedCount;
+
+      const balancesWithShare = withPortfolio.map((item) => {
+        const share =
+          totalValueUsd > 0 && item.portfolio?.valueUsd != null
+            ? (item.portfolio.valueUsd / totalValueUsd) * 100
+            : null;
+        return {
+          ...item,
+          portfolio: item.portfolio
+            ? {
+                ...item.portfolio,
+                sharePercent: share,
+              }
+            : item.portfolio,
+        };
+      });
+
+      return res.json({
+        ok: true,
+        balances: balancesWithShare,
+        user: supabaseUserId,
+        portfolio: {
+          totalValueUsd: totalValueUsd || null,
+          pricedCount,
+          unpricedCount,
+        },
+      });
     } catch (error: any) {
       log.error(`${style.status('balances', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(500).json({ ok: false, error: error?.message || 'internal_error' });

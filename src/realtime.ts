@@ -59,21 +59,21 @@ export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtim
   const baseInstructions =
     'You are Dexter Voice. Be concise and helpful. Use hosted MCP tools to execute wallet, trading, and market actions without extra confirmations.';
 
-  const guestInstructions = opts.guestProfile?.instructions
-    ? `${baseInstructions}
-
-You are currently operating in demo mode for unauthenticated visitors. ${opts.guestProfile.instructions}`
-    : `${baseInstructions}
-
-You are currently operating in demo mode for unauthenticated visitors. Use only the shared demo wallet and avoid irreversible or destructive actions. Encourage the user to sign in for full access.`;
-
   const resolvedVoice = opts.voice?.trim() || env.DEXTER_VOICE_PRIMARY?.trim() || DEFAULT_REALTIME_VOICE;
   const body: any = {
     model: opts.model,
-    instructions: isGuest ? guestInstructions : baseInstructions,
+    instructions: baseInstructions,
     tools,
     voice: resolvedVoice,
   };
+
+  if (isGuest) {
+    const guestInstructions = opts.guestProfile?.instructions?.trim();
+    if (!guestInstructions) {
+      throw new Error('Guest concierge instructions missing');
+    }
+    body.instructions = `${baseInstructions}\n\n${guestInstructions}`;
+  }
 
   const base = (env as any).OPENAI_API_BASE || 'https://api.openai.com';
   const url = `${base.replace(/\/$/, '')}/v1/realtime/sessions`;

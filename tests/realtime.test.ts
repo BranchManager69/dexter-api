@@ -50,6 +50,7 @@ describe('createRealtimeSessionWithEnv', () => {
       apiKey: env.OPENAI_API_KEY,
       model: env.OPENAI_REALTIME_MODEL,
       voice: 'verse',
+      identity: { sessionType: 'user', supabaseUserId: null, supabaseEmail: null },
     });
     expect(out?.client_secret?.value || out?.client_secret).toBeTruthy();
 
@@ -100,7 +101,11 @@ describe('createRealtimeSessionWithEnv', () => {
       ALLOWED_ORIGINS: '*',
     };
 
-    await createRealtimeSessionWithEnv(env, { apiKey: env.OPENAI_API_KEY, model: env.OPENAI_REALTIME_MODEL });
+    await createRealtimeSessionWithEnv(env, {
+      apiKey: env.OPENAI_API_KEY,
+      model: env.OPENAI_REALTIME_MODEL,
+      identity: { sessionType: 'user', supabaseUserId: null, supabaseEmail: null },
+    });
     expect(captured).toBeTruthy();
     const t = captured.tools[0];
     expect(t.type).toBe('mcp');

@@ -12,7 +12,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { chatStreamHandler } from './chatStream.js';
 import { buildSpecialistAgents } from './agents.js';
-import { resolveConciergeProfile, DEFAULT_GUEST_INSTRUCTIONS_FALLBACK, fetchResolvedProfileForUser } from './promptProfiles.js';
+import { resolveConciergeProfile, fetchResolvedProfileForUser, missingPromptFallback } from './promptProfiles.js';
 import { createRealtimeSessionWithEnv, type SessionIdentity } from './realtime.js';
 import { ensureUserWallet } from './wallets/allocator.js';
 import { getSupabaseUserFromAccessToken } from './utils/supabaseAdmin.js';
@@ -192,23 +192,29 @@ app.post('/realtime/sessions', async (req, res) => {
       }
     }
 
-    let defaultGuestInstructions = DEFAULT_GUEST_INSTRUCTIONS_FALLBACK;
+    const guestFallbackMarker = missingPromptFallback('agent.concierge.guest');
+    let defaultGuestInstructions: string | null = null;
     let resolvedUserProfile = null;
     if (identity.sessionType === 'guest') {
       try {
         const conciergeProfile = await resolveConciergeProfile({ skipCache: true });
-        defaultGuestInstructions = conciergeProfile.guestInstructions || DEFAULT_GUEST_INSTRUCTIONS_FALLBACK;
+        const guestInstructions = conciergeProfile.guestInstructions?.trim() || null;
+        if (!guestInstructions || guestInstructions === guestFallbackMarker) {
+          realtimeLog.error(
+            `${style.status('profile', 'error')} ${style.kv('error', 'guest_prompt_missing')}`,
+          );
+          return res.status(500).json({ ok: false, error: 'guest_prompt_missing' });
+        }
+        defaultGuestInstructions = guestInstructions;
       } catch (error: any) {
         realtimeLog.warn(
           `${style.status('profile', 'warn')} ${style.kv('error', error?.message || error)}`,
         );
+        return res.status(500).json({ ok: false, error: 'guest_prompt_load_failed' });
       }
     } else if (identity.sessionType === 'user' && identity.supabaseUserId) {
       try {
         resolvedUserProfile = await fetchResolvedProfileForUser(identity.supabaseUserId);
-        if (resolvedUserProfile && resolvedUserProfile.guestInstructions) {
-          defaultGuestInstructions = resolvedUserProfile.guestInstructions;
-        }
       } catch (error: any) {
         realtimeLog.warn(
           `${style.status('profile', 'warn')} ${style.kv('error', error?.message || error)}`,
@@ -224,6 +230,10 @@ app.post('/realtime/sessions', async (req, res) => {
               req.body?.guestProfile?.instructions || defaultGuestInstructions,
           }
         : null;
+
+    if (identity.sessionType === 'guest' && (!guestProfile || !guestProfile.instructions)) {
+      return res.status(500).json({ ok: false, error: 'guest_prompt_missing' });
+    }
 
     let walletAssignment: Awaited<ReturnType<typeof ensureUserWallet>> | null = null;
     if (identity.sessionType === 'user' && identity.supabaseUserId) {

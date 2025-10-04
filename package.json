@@ -18,7 +18,8 @@
     "x402:test": "node scripts/pay-solana-test.mjs",
     "prisma": "./scripts/prisma.sh",
     "prisma:status": "./scripts/prisma.sh migrate status --schema prisma/schema.prisma",
-    "wallets:import": "tsx scripts/wallets/import.ts"
+    "wallets:import": "tsx scripts/wallets/import.ts",
+    "wallets:generate": "tsx scripts/wallets/generate.ts"
   },
   "dependencies": {
     "@openai/agents": "^0.1.0",

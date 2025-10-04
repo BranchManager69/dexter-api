@@ -240,8 +240,6 @@ export function getDefaultConciergeProfileDefinition(): ConciergePromptProfileDe
   return DEFAULT_CONCIERGE_PROFILE_DEFINITION;
 }
 
-export const DEFAULT_GUEST_INSTRUCTIONS_FALLBACK = DEFAULT_CONCIERGE_PROFILE_DEFINITION.guestInstructions.fallback;
-
 export async function fetchUserPromptProfiles(supabaseUserId: string) {
   return prisma.user_prompt_profiles.findMany({
     where: { supabase_user_id: supabaseUserId },

@@ -59,6 +59,7 @@ describe('POST /realtime/sessions route', () => {
     const body = stub.getLastBody();
     expect(body).toBeTruthy();
     expect(body.model).toBe('gpt-realtime');
+    expect(body.voice).toBe('cedar');
     const t = body.tools?.[0];
     expect(t.type).toBe('mcp');
     expect(t.server_url).toBe('https://mcp.dexter.cash/mcp');

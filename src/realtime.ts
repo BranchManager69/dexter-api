@@ -11,6 +11,8 @@ export type GuestProfile = {
   instructions?: string;
 };
 
+const DEFAULT_REALTIME_VOICE = 'cedar';
+
 export type CreateRealtimeOpts = {
   apiKey: string;
   model: string;
@@ -18,6 +20,7 @@ export type CreateRealtimeOpts = {
   guestProfile?: GuestProfile | null;
   mcpJwt?: string | null;
   walletPublicKey?: string | null;
+  voice?: string | null;
 };
 
 export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtimeOpts) {
@@ -64,10 +67,12 @@ You are currently operating in demo mode for unauthenticated visitors. ${opts.gu
 
 You are currently operating in demo mode for unauthenticated visitors. Use only the shared demo wallet and avoid irreversible or destructive actions. Encourage the user to sign in for full access.`;
 
+  const requestedVoice = opts.voice?.trim() || null;
   const body: any = {
     model: opts.model,
     instructions: isGuest ? guestInstructions : baseInstructions,
     tools,
+    voice: requestedVoice || DEFAULT_REALTIME_VOICE,
   };
 
   const base = (env as any).OPENAI_API_BASE || 'https://api.openai.com';

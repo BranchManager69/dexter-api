@@ -164,6 +164,11 @@ app.post('/realtime/sessions', async (req, res) => {
       return res.status(501).json({ ok: false, error: 'OPENAI_API_KEY not configured' });
     }
 
+    const voice =
+      typeof req.body?.voice === 'string' && req.body.voice.trim()
+        ? req.body.voice.trim()
+        : null;
+
     const accessToken = typeof req.body?.supabaseAccessToken === 'string' && req.body.supabaseAccessToken.trim()
       ? String(req.body.supabaseAccessToken).trim()
       : '';
@@ -221,6 +226,7 @@ app.post('/realtime/sessions', async (req, res) => {
       guestProfile,
       mcpJwt: walletAssignment?.mcpJwt ?? null,
       walletPublicKey: walletAssignment?.wallet.public_key ?? null,
+      ...(voice ? { voice } : {}),
     });
 
     return res.json({

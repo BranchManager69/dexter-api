@@ -46,7 +46,11 @@ describe('createRealtimeSessionWithEnv', () => {
       ALLOWED_ORIGINS: '*',
     };
 
-    const out = await createRealtimeSessionWithEnv(env, { apiKey: env.OPENAI_API_KEY, model: env.OPENAI_REALTIME_MODEL });
+    const out = await createRealtimeSessionWithEnv(env, {
+      apiKey: env.OPENAI_API_KEY,
+      model: env.OPENAI_REALTIME_MODEL,
+      voice: 'verse',
+    });
     expect(out?.client_secret?.value || out?.client_secret).toBeTruthy();
 
     const lastBody = stub.getLastBody();
@@ -55,6 +59,7 @@ describe('createRealtimeSessionWithEnv', () => {
     // Validate
     expect(lastBody).toBeTruthy();
     expect(lastBody.model).toBe('gpt-realtime');
+    expect(lastBody.voice).toBe('verse');
     expect(Array.isArray(lastBody.tools)).toBe(true);
     expect(lastBody.tools.length).toBeGreaterThan(0);
     const t = lastBody.tools[0];
@@ -100,6 +105,7 @@ describe('createRealtimeSessionWithEnv', () => {
     const t = captured.tools[0];
     expect(t.type).toBe('mcp');
     expect(t.allowed_tools).toBeUndefined();
+    expect(captured.voice).toBe('cedar');
 
     await new Promise<void>((r) => srv.close(() => r()));
   });

@@ -12,6 +12,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { ListToolsResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { chatStreamHandler } from './chatStream.js';
 import { buildSpecialistAgents } from './agents.js';
+import { resolveConciergeProfile, DEFAULT_GUEST_INSTRUCTIONS_FALLBACK, fetchResolvedProfileForUser } from './promptProfiles.js';
 import { createRealtimeSessionWithEnv, type SessionIdentity } from './realtime.js';
 import { ensureUserWallet } from './wallets/allocator.js';
 import { getSupabaseUserFromAccessToken } from './utils/supabaseAdmin.js';
@@ -25,6 +26,7 @@ import { registerX402Routes } from './payments/registerX402.js';
 import { registerSolanaRoutes } from './routes/solana.js';
 import { registerStreamSceneRoutes } from './routes/streamScenes.js';
 import { registerPromptModuleRoutes } from './routes/promptModules.js';
+import { registerPromptProfileRoutes } from './routes/promptProfiles.js';
 import { logger, style } from './logger.js';
 
 export const env = loadEnv();
@@ -135,7 +137,7 @@ app.use((req, res, next) => {
   const origin = req.headers.origin || '*';
   const allowed = env.ALLOWED_ORIGINS === '*' || (env.ALLOWED_ORIGINS || '').split(',').map((s: string) => s.trim()).includes(origin as string);
   res.setHeader('Access-Control-Allow-Origin', allowed ? (origin as string) : '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
   if (allowed && origin !== '*') {
     res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -190,13 +192,36 @@ app.post('/realtime/sessions', async (req, res) => {
       }
     }
 
+    let defaultGuestInstructions = DEFAULT_GUEST_INSTRUCTIONS_FALLBACK;
+    let resolvedUserProfile = null;
+    if (identity.sessionType === 'guest') {
+      try {
+        const conciergeProfile = await resolveConciergeProfile({ skipCache: true });
+        defaultGuestInstructions = conciergeProfile.guestInstructions || DEFAULT_GUEST_INSTRUCTIONS_FALLBACK;
+      } catch (error: any) {
+        realtimeLog.warn(
+          `${style.status('profile', 'warn')} ${style.kv('error', error?.message || error)}`,
+        );
+      }
+    } else if (identity.sessionType === 'user' && identity.supabaseUserId) {
+      try {
+        resolvedUserProfile = await fetchResolvedProfileForUser(identity.supabaseUserId);
+        if (resolvedUserProfile && resolvedUserProfile.guestInstructions) {
+          defaultGuestInstructions = resolvedUserProfile.guestInstructions;
+        }
+      } catch (error: any) {
+        realtimeLog.warn(
+          `${style.status('profile', 'warn')} ${style.kv('error', error?.message || error)}`,
+        );
+      }
+    }
+
     const guestProfile =
       identity.sessionType === 'guest'
         ? {
-            label: req.body?.guestProfile?.label || 'Demo Wallet',
+            label: req.body?.guestProfile?.label || 'Dexter Demo Wallet',
             instructions:
-              req.body?.guestProfile?.instructions ||
-              'Operate using the shared Dexter demo wallet with limited funds. Disable irreversible actions when possible and direct the user to sign in for full access.',
+              req.body?.guestProfile?.instructions || defaultGuestInstructions,
           }
         : null;
 
@@ -209,13 +234,14 @@ app.post('/realtime/sessions', async (req, res) => {
     }
 
     realtimeLog.info(
-      `${style.status('start', 'start')} ${style.kv('type', identity.sessionType)} ${style.kv('model', model)}`,
+      `${style.status('start', 'start')} ${style.kv('type', identity.sessionType)} ${style.kv('model', model)} ${style.kv('voice', voice || 'default')}`,
       {
         sessionType: identity.sessionType,
         supabaseUserId: identity.supabaseUserId || null,
         supabaseEmail: identity.supabaseEmail || null,
         wallet: walletAssignment?.wallet.public_key || null,
         model,
+        voice: voice || null,
       }
     );
 
@@ -226,7 +252,7 @@ app.post('/realtime/sessions', async (req, res) => {
       guestProfile,
       mcpJwt: walletAssignment?.mcpJwt ?? null,
       walletPublicKey: walletAssignment?.wallet.public_key ?? null,
-      ...(voice ? { voice } : {}),
+      voice,
     });
 
     return res.json({
@@ -241,6 +267,13 @@ app.post('/realtime/sessions', async (req, res) => {
           ? {
               public_key: walletAssignment.wallet.public_key,
               label: walletAssignment.wallet.label,
+            }
+          : null,
+        prompt_profile: resolvedUserProfile
+          ? {
+              id: resolvedUserProfile.id,
+              agent_name: resolvedUserProfile.agentName,
+              voice_key: resolvedUserProfile.voiceKey,
             }
           : null,
       },
@@ -351,6 +384,7 @@ registerX402Routes(app, env);
 registerSolanaRoutes(app);
 registerStreamSceneRoutes(app, env);
 registerPromptModuleRoutes(app);
+registerPromptProfileRoutes(app);
 
 const CONNECTOR_PROBE_TARGETS = [
   {

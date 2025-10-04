@@ -103,3 +103,22 @@ model user_subscriptions {
   @@index([supabase_user_id])
   @@map("user_subscriptions")
 }
+
+model user_prompt_profiles {
+  id               String   @id @default(uuid()) @db.Uuid
+  supabase_user_id String   @db.VarChar(255)
+  name             String
+  description      String?
+  instruction_slug String
+  handoff_slug     String
+  guest_slug       String
+  tool_slugs       Json     @default("{}")
+  voice_key        String?  @db.VarChar(255)
+  metadata         Json     @default("{}")
+  is_default       Boolean  @default(false)
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@index([supabase_user_id], map: "idx_user_prompt_profiles_user")
+  @@map("user_prompt_profiles")
+}

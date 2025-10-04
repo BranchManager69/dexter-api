@@ -276,7 +276,7 @@ export function registerPromptModuleRoutes(app: Express) {
             ${segment},
             encode(digest(${segment}, 'sha256'), 'hex'),
             1,
-            ${auth.userId}
+            ${auth.userId}::uuid
           )
           RETURNING id, slug, title, segment, version, checksum, created_at, updated_at, updated_by,
                     (SELECT email FROM auth.users WHERE id = updated_by) AS updated_by_email
@@ -289,7 +289,7 @@ export function registerPromptModuleRoutes(app: Express) {
         if (notes) {
           await tx.$executeRaw`
             INSERT INTO prompt_module_revisions (prompt_module_id, slug, title, segment, checksum, version, notes, updated_by)
-            VALUES (${inserted[0].id}, ${slug}, ${title}, ${segment}, encode(digest(${segment}, 'sha256'), 'hex'), 1, ${notes}, ${auth.userId})
+            VALUES (${inserted[0].id}::uuid, ${slug}, ${title}, ${segment}, encode(digest(${segment}, 'sha256'), 'hex'), 1, ${notes}, ${auth.userId}::uuid)
           `;
         }
 
@@ -366,14 +366,14 @@ export function registerPromptModuleRoutes(app: Express) {
         await tx.$executeRaw`
           INSERT INTO prompt_module_revisions (prompt_module_id, slug, title, segment, checksum, version, notes, updated_by)
           VALUES (
-            ${current.id},
+            ${current.id}::uuid,
             ${current.slug},
             ${current.title},
             ${current.segment},
             ${current.checksum},
             ${current.version},
             ${notes},
-            ${auth.userId}
+            ${auth.userId}::uuid
           )
         `;
 
@@ -386,8 +386,8 @@ export function registerPromptModuleRoutes(app: Express) {
               checksum = encode(digest(${segment}, 'sha256'), 'hex'),
               version = ${nextVersion},
               updated_at = timezone('utc'::text, now()),
-              updated_by = ${auth.userId}
-          WHERE id = ${current.id}
+              updated_by = ${auth.userId}::uuid
+          WHERE id = ${current.id}::uuid
           RETURNING id, slug, title, segment, version, checksum, created_at, updated_at, updated_by,
                     (SELECT email FROM auth.users WHERE id = updated_by) AS updated_by_email
         `;

@@ -99,6 +99,7 @@ const envSchema = z.object({
   // Optional comma-separated allowlists to constrain tools per surface
   MCP_ALLOWED_TOOLS_CHAT: z.string().optional().default(''),
   MCP_ALLOWED_TOOLS_VOICE: z.string().optional().default(''),
+  DEXTER_VOICE_PRIMARY: z.string().optional().default('alloy'),
   PORT: z.coerce.number().default(3030),
   ALLOWED_ORIGINS: z.string().default('*'),
   STREAM_SCENE_PASSWORD: z.string().default('0727'),
@@ -130,6 +131,7 @@ export function loadEnv(): Env {
     MCP_JWT_TTL_SECONDS: process.env.MCP_JWT_TTL_SECONDS,
     MCP_ALLOWED_TOOLS_CHAT: process.env.MCP_ALLOWED_TOOLS_CHAT,
     MCP_ALLOWED_TOOLS_VOICE: process.env.MCP_ALLOWED_TOOLS_VOICE,
+    DEXTER_VOICE_PRIMARY: process.env.DEXTER_VOICE_PRIMARY,
     PORT: process.env.PORT,
     ALLOWED_ORIGINS: process.env.ALLOWED_ORIGINS,
     STREAM_SCENE_PASSWORD: process.env.STREAM_SCENE_PASSWORD,

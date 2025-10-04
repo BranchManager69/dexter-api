@@ -29,6 +29,7 @@ interface CliArgs {
   metadata?: string;
   dryRun: boolean;
   workers?: number;
+  exactMatch?: boolean;
 }
 
 type WalletRecord = {
@@ -55,8 +56,8 @@ async function main() {
     })
     .option('prefix', {
       type: 'string',
-      describe: 'Case-insensitive vanity prefix for the public key',
-      default: 'dex',
+      describe: 'Prefix the public key must start with',
+      default: 'Dex',
     })
     .option('label-prefix', {
       type: 'string',
@@ -74,6 +75,11 @@ async function main() {
       type: 'boolean',
       default: false,
       describe: 'Generate wallets but do not insert them into the database',
+    })
+    .option('exact-match', {
+      type: 'boolean',
+      default: true,
+      describe: 'Require exact case match for the prefix',
     })
     .option('workers', {
       type: 'number',
@@ -93,13 +99,16 @@ async function main() {
   const labelPrefix = argv.labelPrefix?.trim() || null;
   const memo = argv.memo?.trim() || null;
   const dryRun = Boolean(argv.dryRun);
+  const exactMatch = argv.exactMatch !== undefined ? Boolean(argv.exactMatch) : true;
 
   const cpuCount = Math.max(1, os.cpus()?.length ?? 1);
   let workerCount = argv.workers !== undefined ? Math.floor(argv.workers) : Math.min(count, cpuCount);
   workerCount = Math.max(1, workerCount);
   workerCount = Math.min(workerCount, count);
 
-  console.log(`[wallet-generate] Starting generation of ${count} wallet(s) with prefix "${prefix}" using ${workerCount} worker(s).`);
+  console.log(
+    `[wallet-generate] Starting generation of ${count} wallet(s) with prefix "${prefix}" (${exactMatch ? 'case-sensitive' : 'case-insensitive'}) using ${workerCount} worker(s).`
+  );
 
   let metadata: any = {};
   if (argv.metadata) {
@@ -217,7 +226,7 @@ async function main() {
 
     for (let index = 0; index < workerCount; index += 1) {
       const worker = new Worker(new URL('./generateWorker.ts', import.meta.url), {
-        workerData: { prefix },
+        workerData: { prefix, exactMatch },
         execArgv: workerExecArgv,
       });
 

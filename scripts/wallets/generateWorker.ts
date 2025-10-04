@@ -6,11 +6,17 @@ if (!parentPort) {
 }
 
 const prefixRaw: string = typeof workerData?.prefix === 'string' ? workerData.prefix : '';
-const normalizedPrefix = prefixRaw.trim().toLowerCase();
+const exactMatch = Boolean(workerData?.exactMatch);
+
+const normalizedPrefix = exactMatch ? prefixRaw.trim() : prefixRaw.trim().toLowerCase();
 
 function matchesPrefix(publicKey: string): boolean {
   if (!normalizedPrefix) return true;
-  return publicKey.slice(0, normalizedPrefix.length).toLowerCase() === normalizedPrefix;
+  const prefix = publicKey.slice(0, normalizedPrefix.length);
+  if (exactMatch) {
+    return prefix === normalizedPrefix;
+  }
+  return prefix.toLowerCase() === normalizedPrefix.toLowerCase();
 }
 
 let running = true;

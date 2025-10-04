@@ -95,6 +95,42 @@ const DEFAULT_CONCIERGE_PROFILE_DEFINITION: ConciergePromptProfileDefinition = {
       slug: 'agent.concierge.tool.codex_exec',
       fallback: missingPromptFallback('agent.concierge.tool.codex_exec'),
     },
+    solana_resolve_token: {
+      slug: 'agent.concierge.tool.solana_resolve_token',
+      fallback: missingPromptFallback('agent.concierge.tool.solana_resolve_token'),
+    },
+    solana_list_balances: {
+      slug: 'agent.concierge.tool.solana_list_balances',
+      fallback: missingPromptFallback('agent.concierge.tool.solana_list_balances'),
+    },
+    solana_preview_sell_all: {
+      slug: 'agent.concierge.tool.solana_preview_sell_all',
+      fallback: missingPromptFallback('agent.concierge.tool.solana_preview_sell_all'),
+    },
+    solana_execute_buy: {
+      slug: 'agent.concierge.tool.solana_execute_buy',
+      fallback: missingPromptFallback('agent.concierge.tool.solana_execute_buy'),
+    },
+    solana_execute_sell: {
+      slug: 'agent.concierge.tool.solana_execute_sell',
+      fallback: missingPromptFallback('agent.concierge.tool.solana_execute_sell'),
+    },
+    solana_swap_preview: {
+      slug: 'agent.concierge.tool.solana_swap_preview',
+      fallback: missingPromptFallback('agent.concierge.tool.solana_swap_preview'),
+    },
+    solana_swap_execute: {
+      slug: 'agent.concierge.tool.solana_swap_execute',
+      fallback: missingPromptFallback('agent.concierge.tool.solana_swap_execute'),
+    },
+    stream_get_scene: {
+      slug: 'agent.concierge.tool.stream_get_scene',
+      fallback: missingPromptFallback('agent.concierge.tool.stream_get_scene'),
+    },
+    stream_set_scene: {
+      slug: 'agent.concierge.tool.stream_set_scene',
+      fallback: missingPromptFallback('agent.concierge.tool.stream_set_scene'),
+    },
   },
 };
 

@@ -2,7 +2,15 @@ import type { Express, Request, Response } from 'express';
 import { PublicKey } from '@solana/web3.js';
 import prisma from '../prisma.js';
 import { getSupabaseUserIdFromRequest } from '../utils/supabase.js';
-import { executeBuy, executeSell, listTokenBalances, previewSellAll, resolveToken } from '../solana/tradingService.js';
+import {
+  executeBuy,
+  executeSell,
+  executeSwap,
+  listTokenBalances,
+  previewSellAll,
+  previewSwap,
+  resolveToken,
+} from '../solana/tradingService.js';
 import { logger, style } from '../logger.js';
 
 function parseNumber(input: unknown, fallback = 0): number {
@@ -340,6 +348,93 @@ export function registerSolanaRoutes(app: Express) {
     } catch (error: any) {
       log.error(`${style.status('preview', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(400).json({ ok: false, error: error?.message || 'preview_failed' });
+    }
+  });
+
+  const parseSwapPayload = (body: any) => {
+    const amountCandidate = body?.amountUi ?? body?.amount_ui ?? body?.amount;
+    const desiredOutputCandidate = body?.desiredOutputUi ?? body?.desired_output_ui ?? body?.outputAmountUi;
+    const walletCandidate = typeof body?.walletAddress === 'string' ? body.walletAddress.trim() : undefined;
+    const slippageCandidate = body?.slippageBps ?? body?.slippage_bps ?? body?.slippagebps;
+    const modeRaw = body?.mode ?? body?.swapMode ?? body?.swap_mode;
+    let mode: 'ExactIn' | 'ExactOut' | undefined;
+    if (typeof modeRaw === 'string') {
+      const lowered = modeRaw.toLowerCase();
+      if (lowered === 'exactout') mode = 'ExactOut';
+      else if (lowered === 'exactin') mode = 'ExactIn';
+    }
+    return {
+      walletAddress: walletCandidate && walletCandidate.length ? walletCandidate : null,
+      inputMint: String(body?.inputMint || body?.input_mint || ''),
+      outputMint: String(body?.outputMint || body?.output_mint || ''),
+      amountUi: amountCandidate ?? null,
+      slippageBps: slippageCandidate != null ? Number(slippageCandidate) : undefined,
+      mode,
+      desiredOutputUi: desiredOutputCandidate ?? null,
+    };
+  };
+
+  app.post('/api/solana/swap/preview', async (req: Request, res: Response) => {
+    try {
+      const supabaseUserId = await getSupabaseUserIdFromRequest(req);
+      const payload = parseSwapPayload(req.body || {});
+      if (!payload.mode) {
+        return res.status(400).json({ ok: false, error: 'mode_required', message: 'mode must be ExactIn or ExactOut.' });
+      }
+      if (payload.mode === 'ExactIn' && (payload.amountUi == null || payload.amountUi === '')) {
+        return res.status(400).json({ ok: false, error: 'amount_required', message: 'amountUi is required for ExactIn swaps.' });
+      }
+      if (payload.mode === 'ExactOut' && (payload.desiredOutputUi == null || payload.desiredOutputUi === '')) {
+        return res.status(400).json({ ok: false, error: 'desired_output_required', message: 'desiredOutputUi is required for ExactOut swaps.' });
+      }
+      const result = await previewSwap({
+        supabaseUserId,
+        walletAddress: payload.walletAddress,
+        inputMint: payload.inputMint,
+        outputMint: payload.outputMint,
+        amountUi: payload.amountUi ?? undefined,
+        slippageBps: payload.slippageBps,
+        mode: payload.mode,
+        desiredOutputUi: payload.desiredOutputUi ?? undefined,
+      });
+      return res.json({ ok: true, result });
+    } catch (error: any) {
+      const code = typeof error?.code === 'string' ? error.code : 'swap_preview_failed';
+      const message = error?.message || code;
+      log.error(`${style.status('swap-preview', 'error')} ${style.kv('error', message)}`, error);
+      return res.status(400).json({ ok: false, error: code, message, details: error?.details || null });
+    }
+  });
+
+  app.post('/api/solana/swap/execute', async (req: Request, res: Response) => {
+    try {
+      const supabaseUserId = await getSupabaseUserIdFromRequest(req);
+      const payload = parseSwapPayload(req.body || {});
+      if (!payload.mode) {
+        return res.status(400).json({ ok: false, error: 'mode_required', message: 'mode must be ExactIn or ExactOut.' });
+      }
+      if (payload.mode === 'ExactIn' && (payload.amountUi == null || payload.amountUi === '')) {
+        return res.status(400).json({ ok: false, error: 'amount_required', message: 'amountUi is required for ExactIn swaps.' });
+      }
+      if (payload.mode === 'ExactOut' && (payload.desiredOutputUi == null || payload.desiredOutputUi === '')) {
+        return res.status(400).json({ ok: false, error: 'desired_output_required', message: 'desiredOutputUi is required for ExactOut swaps.' });
+      }
+      const result = await executeSwap({
+        supabaseUserId,
+        walletAddress: payload.walletAddress,
+        inputMint: payload.inputMint,
+        outputMint: payload.outputMint,
+        amountUi: payload.amountUi ?? undefined,
+        slippageBps: payload.slippageBps,
+        mode: payload.mode,
+        desiredOutputUi: payload.desiredOutputUi ?? undefined,
+      });
+      return res.json({ ok: true, result });
+    } catch (error: any) {
+      const code = typeof error?.code === 'string' ? error.code : 'swap_failed';
+      const message = error?.message || code;
+      log.error(`${style.status('swap-execute', 'error')} ${style.kv('error', message)}`, error);
+      return res.status(400).json({ ok: false, error: code, message, details: error?.details || null });
     }
   });
 }

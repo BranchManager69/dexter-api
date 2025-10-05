@@ -21,3 +21,6 @@ tsconfig.tsbuildinfo
 .DS_Store
 .idea/
 .vscode/
+
+# Local temp cache
+.temp/

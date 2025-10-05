@@ -1,6 +1,5 @@
 import prisma from '../prisma.js';
-
-const MAX_MEMORIES = 5;
+import { MEMORY_LIMITS } from '../config/memory.js';
 
 function toDate(value: Date | string | null | undefined): Date | null {
   if (!value) return null;
@@ -31,7 +30,7 @@ export async function buildUserMemoryInstructions(supabaseUserId: string): Promi
     prisma.user_memories.findMany({
       where: { supabase_user_id: supabaseUserId },
       orderBy: { created_at: 'desc' },
-      take: MAX_MEMORIES,
+      take: MEMORY_LIMITS.instructions.recentCount,
     }),
   ]);
 
@@ -58,12 +57,12 @@ export async function buildUserMemoryInstructions(supabaseUserId: string): Promi
       lines.push(`• ${ts}: ${summary}`);
 
       const facts = toStringArray(memory.facts);
-      facts.slice(0, 2).forEach((factLine) => {
+      facts.slice(0, MEMORY_LIMITS.instructions.maxFactsPerMemory).forEach((factLine) => {
         lines.push(`  - ${factLine}`);
       });
 
       const followUps = toStringArray(memory.follow_ups);
-      followUps.slice(0, 1).forEach((fLine) => {
+      followUps.slice(0, MEMORY_LIMITS.instructions.maxFollowUpsPerMemory).forEach((fLine) => {
         lines.push(`  - Follow-up: ${fLine}`);
       });
     });

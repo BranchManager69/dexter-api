@@ -131,6 +131,8 @@ model user_profiles {
   twitter_handle   String?  @db.VarChar(255)
   bio              String?
   metadata         Json     @default("{}")
+  /// Latest long-term dossier snapshot (identity, holdings, preferences, stats).
+  dossier          Json?
   onboarded_at     DateTime? @db.Timestamptz(6)
   created_at       DateTime  @default(now()) @db.Timestamptz(6)
   updated_at       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)

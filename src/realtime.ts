@@ -21,6 +21,7 @@ export type CreateRealtimeOpts = {
   mcpJwt?: string | null;
   walletPublicKey?: string | null;
   voice?: string | null;
+  memoryInstructions?: string | null;
 };
 
 export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtimeOpts) {
@@ -73,6 +74,13 @@ export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtim
       throw new Error('Guest concierge instructions missing');
     }
     body.instructions = `${baseInstructions}\n\n${guestInstructions}`;
+  }
+
+  if (!isGuest) {
+    const memoryInstructions = opts.memoryInstructions?.trim();
+    if (memoryInstructions) {
+      body.instructions = `${memoryInstructions}\n\n${body.instructions}`;
+    }
   }
 
   const base = (env as any).OPENAI_API_BASE || 'https://api.openai.com';

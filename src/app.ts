@@ -27,6 +27,8 @@ import { registerSolanaRoutes } from './routes/solana.js';
 import { registerStreamSceneRoutes } from './routes/streamScenes.js';
 import { registerPromptModuleRoutes } from './routes/promptModules.js';
 import { registerPromptProfileRoutes } from './routes/promptProfiles.js';
+import { registerConversationLogRoutes } from './routes/conversationLogs.js';
+import { buildUserMemoryInstructions } from './utils/memory.js';
 import { logger, style } from './logger.js';
 
 export const env = loadEnv();
@@ -222,6 +224,17 @@ app.post('/realtime/sessions', async (req, res) => {
       }
     }
 
+    let memoryInstructions: string | null = null;
+    if (identity.sessionType === 'user' && identity.supabaseUserId) {
+      try {
+        memoryInstructions = await buildUserMemoryInstructions(identity.supabaseUserId);
+      } catch (error: any) {
+        realtimeLog.warn(
+          `${style.status('memory', 'warn')} ${style.kv('error', error?.message || error)}`,
+        );
+      }
+    }
+
     const guestProfile =
       identity.sessionType === 'guest'
         ? {
@@ -263,6 +276,7 @@ app.post('/realtime/sessions', async (req, res) => {
       mcpJwt: walletAssignment?.mcpJwt ?? null,
       walletPublicKey: walletAssignment?.wallet.public_key ?? null,
       voice,
+      memoryInstructions,
     });
 
     return res.json({
@@ -395,6 +409,7 @@ registerSolanaRoutes(app);
 registerStreamSceneRoutes(app, env);
 registerPromptModuleRoutes(app);
 registerPromptProfileRoutes(app);
+registerConversationLogRoutes(app);
 
 const CONNECTOR_PROBE_TARGETS = [
   {

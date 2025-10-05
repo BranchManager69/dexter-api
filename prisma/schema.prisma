@@ -122,3 +122,67 @@ model user_prompt_profiles {
   @@index([supabase_user_id], map: "idx_user_prompt_profiles_user")
   @@map("user_prompt_profiles")
 }
+
+model user_profiles {
+  id               String   @id @default(uuid()) @db.Uuid
+  supabase_user_id String   @unique @db.VarChar(255)
+  preferred_name   String?
+  display_name     String?
+  twitter_handle   String?  @db.VarChar(255)
+  bio              String?
+  metadata         Json     @default("{}")
+  onboarded_at     DateTime? @db.Timestamptz(6)
+  created_at       DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  memories         user_memories[]
+
+  @@index([supabase_user_id], map: "idx_user_profiles_user")
+  @@index([onboarded_at], map: "idx_user_profiles_onboarded_at")
+  @@map("user_profiles")
+}
+
+model conversation_logs {
+  id               String    @id @default(uuid()) @db.Uuid
+  supabase_user_id String    @db.VarChar(255)
+  session_id       String    @db.VarChar(255)
+  started_at       DateTime  @default(now()) @db.Timestamptz(6)
+  ended_at         DateTime? @db.Timestamptz(6)
+  duration_ms      BigInt?
+  transcript       Json?
+  tool_calls       Json?
+  metadata         Json     @default("{}")
+  status           String   @default("pending_summary") @db.VarChar(32)
+  error_message    String?
+  created_at       DateTime @default(now()) @db.Timestamptz(6)
+  updated_at       DateTime @default(now()) @updatedAt @db.Timestamptz(6)
+
+  memories         user_memories[]
+
+  @@index([supabase_user_id], map: "idx_conversation_logs_user")
+  @@index([session_id], map: "idx_conversation_logs_session")
+  @@index([status], map: "idx_conversation_logs_status")
+  @@index([started_at], map: "idx_conversation_logs_started_at")
+  @@map("conversation_logs")
+}
+
+model user_memories {
+  id               String             @id @default(uuid()) @db.Uuid
+  supabase_user_id String             @db.VarChar(255)
+  source_log_id    String?            @db.Uuid
+  summary          String
+  facts            Json              @default("{}")
+  tags             String[]          @default([])
+  follow_ups       Json              @default("{}")
+  created_at       DateTime           @default(now()) @db.Timestamptz(6)
+  expires_at       DateTime?          @db.Timestamptz(6)
+  metadata         Json               @default("{}")
+
+  source_log       conversation_logs? @relation(fields: [source_log_id], references: [id], onDelete: SetNull)
+  profile          user_profiles?     @relation(fields: [supabase_user_id], references: [supabase_user_id], onDelete: Cascade)
+
+  @@index([supabase_user_id], map: "idx_user_memories_user")
+  @@index([created_at], map: "idx_user_memories_created_at")
+  @@index([expires_at], map: "idx_user_memories_expires_at")
+  @@map("user_memories")
+}

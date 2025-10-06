@@ -11,6 +11,7 @@ const MAX_BATCH = 3;
 const DEFAULT_INTERVAL_MS = 30_000;
 const MEMORY_PROMPT_SLUG = 'memory.summarizer.instructions';
 const DOSSIER_PROMPT_SLUG = 'memory.dossier.instructions';
+const DOSSIER_PROMPT_APPENDIX = 'Respond with JSON including a next_conversation_prompt key: a single question (<= 60 characters) suggesting a follow-up action for the user. If nothing is relevant, return an empty string for that key.';
 
 const SUMMARY_SCHEMA = {
   name: 'MemorySummary',
@@ -38,7 +39,7 @@ const DOSSIER_SCHEMA = {
   schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['identity', 'holdings', 'preferences', 'stats'],
+    required: ['identity', 'holdings', 'preferences', 'stats', 'next_conversation_prompt'],
     properties: {
       identity: {
         type: 'object',
@@ -83,6 +84,9 @@ const DOSSIER_SCHEMA = {
           memoryCount: { type: 'number' },
         },
       },
+      next_conversation_prompt: {
+        type: 'string',
+      },
     },
   },
 } as const;
@@ -110,6 +114,7 @@ type UserDossier = {
     memoryCount: number;
     [key: string]: any;
   };
+  nextConversationPrompt: string;
   [key: string]: any;
 };
 
@@ -121,6 +126,7 @@ type DossierFallback = {
   firstConversationAt: string | null;
   lastConversationAt: string | null;
   memoryCount: number;
+  nextConversationPrompt: string | null;
   existingDossier?: any;
 };
 
@@ -292,23 +298,37 @@ function sanitizeDossier(raw: any, fallback: DossierFallback): UserDossier {
     memoryCount: fallback.memoryCount,
   };
 
+  const promptCandidate = (() => {
+    if (raw && typeof raw === 'object' && typeof (raw as any).next_conversation_prompt === 'string') {
+      return (raw as any).next_conversation_prompt;
+    }
+    if (existing && typeof existing.nextConversationPrompt === 'string') {
+      return existing.nextConversationPrompt;
+    }
+    if (existing && typeof existing.next_conversation_prompt === 'string') {
+      return existing.next_conversation_prompt;
+    }
+    return fallback.nextConversationPrompt ?? '';
+  })();
+
   const dossier: UserDossier = {
     identity,
     holdings,
     preferences,
     stats,
+    nextConversationPrompt: sanitizeNextConversationPrompt(promptCandidate),
   };
 
   if (raw && typeof raw === 'object') {
     for (const [key, value] of Object.entries(raw as Record<string, any>)) {
-      if (['identity', 'holdings', 'preferences', 'stats'].includes(key)) continue;
+      if (['identity', 'holdings', 'preferences', 'stats', 'next_conversation_prompt'].includes(key)) continue;
       (dossier as Record<string, any>)[key] = value;
     }
   }
 
   if (existing && typeof existing === 'object') {
     for (const [key, value] of Object.entries(existing as Record<string, any>)) {
-      if (['identity', 'holdings', 'preferences', 'stats'].includes(key)) continue;
+      if (['identity', 'holdings', 'preferences', 'stats', 'nextConversationPrompt'].includes(key)) continue;
       if (!(key in dossier)) {
         (dossier as Record<string, any>)[key] = value;
       }
@@ -316,6 +336,34 @@ function sanitizeDossier(raw: any, fallback: DossierFallback): UserDossier {
   }
 
   return dossier;
+}
+
+function sanitizeNextConversationPrompt(value: unknown): string {
+  if (typeof value !== 'string') return '';
+
+  let prompt = value.replace(/\s+/g, ' ').trim();
+  if (!prompt) return '';
+
+  if (!prompt.endsWith('?')) {
+    prompt = prompt.replace(/[?!\.]+$/u, '').trim();
+    if (!prompt) return '';
+    prompt = `${prompt}?`;
+  }
+
+  if (prompt.length > 60) {
+    prompt = prompt.slice(0, 60).trimEnd();
+    if (!prompt.endsWith('?')) {
+      const base = prompt.replace(/[?!\.]+$/u, '').slice(0, 59).trimEnd();
+      prompt = base ? `${base}?` : '';
+    }
+  }
+
+  if (prompt.length > 60) {
+    prompt = prompt.slice(0, 59).trimEnd();
+    prompt = prompt ? `${prompt}?` : '';
+  }
+
+  return prompt.length <= 60 ? prompt : prompt.slice(0, 59).trimEnd() + '?';
 }
 
 function transcriptToText(transcript: unknown): string {
@@ -522,7 +570,10 @@ async function buildDossierSnapshot(env: Env, log: any, memory: MemoryPayload): 
     : appendedMemories;
   const memoryCount = totalMemoryCount;
 
-  const prompt = await loadDossierPrompt();
+  const basePrompt = await loadDossierPrompt();
+  const prompt = basePrompt && basePrompt.includes('next_conversation_prompt')
+    ? basePrompt
+    : `${basePrompt}\n\n${DOSSIER_PROMPT_APPENDIX}`;
   const model = env.TEXT_MODEL || 'gpt-5-mini';
 
   const dossierContext = {
@@ -547,6 +598,11 @@ async function buildDossierSnapshot(env: Env, log: any, memory: MemoryPayload): 
       lastConversationAt: lastConversationAtCandidate,
       memoryCount,
     },
+    nextConversationPrompt: typeof existingDossier?.nextConversationPrompt === 'string'
+      ? existingDossier.nextConversationPrompt
+      : typeof existingDossier?.next_conversation_prompt === 'string'
+        ? existingDossier.next_conversation_prompt
+        : null,
   };
 
   const inputPayload = JSON.stringify(dossierContext, null, 2);
@@ -583,6 +639,11 @@ async function buildDossierSnapshot(env: Env, log: any, memory: MemoryPayload): 
     firstConversationAt,
     lastConversationAt: lastConversationAtCandidate,
     memoryCount,
+    nextConversationPrompt: typeof existingDossier?.nextConversationPrompt === 'string'
+      ? existingDossier.nextConversationPrompt
+      : typeof existingDossier?.next_conversation_prompt === 'string'
+        ? existingDossier.next_conversation_prompt
+        : null,
     existingDossier,
   };
 

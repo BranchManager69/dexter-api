@@ -37,7 +37,7 @@ const DOSSIER_SCHEMA = {
   name: 'UserDossier',
   schema: {
     type: 'object',
-    additionalProperties: true,
+    additionalProperties: false,
     required: ['identity', 'holdings', 'preferences', 'stats'],
     properties: {
       identity: {

@@ -28,6 +28,7 @@ import { registerStreamSceneRoutes } from './routes/streamScenes.js';
 import { registerPromptModuleRoutes } from './routes/promptModules.js';
 import { registerPromptProfileRoutes } from './routes/promptProfiles.js';
 import { registerConversationLogRoutes } from './routes/conversationLogs.js';
+import { registerDossierRoutes } from './routes/dossier.js';
 import { buildUserMemoryInstructions } from './utils/memory.js';
 import { logger, style } from './logger.js';
 
@@ -410,6 +411,7 @@ registerStreamSceneRoutes(app, env);
 registerPromptModuleRoutes(app);
 registerPromptProfileRoutes(app);
 registerConversationLogRoutes(app);
+registerDossierRoutes(app);
 
 const CONNECTOR_PROBE_TARGETS = [
   {

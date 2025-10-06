@@ -695,29 +695,34 @@ async function handleHealthFull(req: Request, res: Response) {
     return res.status(403).json({ ok: false, error: 'forbidden' });
   }
 
-  const authorization = (req.headers['authorization'] || req.headers['Authorization']) as string | undefined;
-  if (!authorization || !authorization.toLowerCase().startsWith('bearer ')) {
-    return res.status(403).json({ ok: false, error: 'admin_required' });
-  }
+  const hasHealthToken =
+    headerToken === env.HEALTH_PROBE_TOKEN || queryToken === env.HEALTH_PROBE_TOKEN;
 
-  const accessToken = authorization.split(' ')[1]?.trim();
-  if (!accessToken) {
-    return res.status(403).json({ ok: false, error: 'admin_required' });
-  }
+  if (!hasHealthToken) {
+    const authorization = (req.headers['authorization'] || req.headers['Authorization']) as string | undefined;
+    if (!authorization || !authorization.toLowerCase().startsWith('bearer ')) {
+      return res.status(403).json({ ok: false, error: 'admin_required' });
+    }
 
-  let requesterUser: any = null;
-  try {
-    requesterUser = await getSupabaseUserFromAccessToken(accessToken);
-  } catch (error: any) {
-    healthLog.warn(
-      `${style.status('auth', 'warn')} ${style.kv('error', error?.message || error)}`,
-      error
-    );
-    return res.status(403).json({ ok: false, error: 'admin_required' });
-  }
+    const accessToken = authorization.split(' ')[1]?.trim();
+    if (!accessToken) {
+      return res.status(403).json({ ok: false, error: 'admin_required' });
+    }
 
-  if (!isAdminUser(requesterUser)) {
-    return res.status(403).json({ ok: false, error: 'admin_required' });
+    let requesterUser: any = null;
+    try {
+      requesterUser = await getSupabaseUserFromAccessToken(accessToken);
+    } catch (error: any) {
+      healthLog.warn(
+        `${style.status('auth', 'warn')} ${style.kv('error', error?.message || error)}`,
+        error
+      );
+      return res.status(403).json({ ok: false, error: 'admin_required' });
+    }
+
+    if (!isAdminUser(requesterUser)) {
+      return res.status(403).json({ ok: false, error: 'admin_required' });
+    }
   }
 
   const SUPABASE_URL = process.env.SUPABASE_URL || '';

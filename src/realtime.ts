@@ -4,6 +4,7 @@ export type SessionIdentity = {
   sessionType: 'guest' | 'user';
   supabaseUserId?: string | null;
   supabaseEmail?: string | null;
+  roles?: string[] | null;
 };
 
 export type GuestProfile = {
@@ -30,11 +31,13 @@ export async function createRealtimeSessionWithEnv(env: Env, opts: CreateRealtim
         sessionType: opts.identity.sessionType,
         supabaseUserId: opts.identity.supabaseUserId ?? null,
         supabaseEmail: opts.identity.supabaseEmail ?? null,
+        roles: opts.identity.roles ?? null,
       }
     : {
         sessionType: 'guest',
         supabaseUserId: null,
         supabaseEmail: null,
+        roles: null,
       };
 
   const isGuest = identity.sessionType === 'guest';

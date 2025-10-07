@@ -49,12 +49,14 @@ function normalizeIdentity(input: SessionIdentity): SessionIdentity {
       sessionType: 'user',
       supabaseUserId: input.supabaseUserId ?? null,
       supabaseEmail: input.supabaseEmail ?? null,
+      roles: input.roles ?? null,
     };
   }
   return {
     sessionType: 'guest',
     supabaseUserId: null,
     supabaseEmail: null,
+    roles: null,
   };
 }
 
@@ -64,8 +66,18 @@ const ADMIN_ROLES = new Set(['admin', 'superadmin']);
 
 function extractRoles(value: unknown): string[] {
   if (!value) return [];
-  if (Array.isArray(value)) return value.map((entry) => String(entry).toLowerCase());
-  if (typeof value === 'string') return [value.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (entry == null) return '';
+        return String(entry).trim().toLowerCase();
+      })
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const lowered = value.trim().toLowerCase();
+    return lowered ? [lowered] : [];
+  }
   return [];
 }
 
@@ -200,6 +212,10 @@ app.post('/realtime/sessions', async (req, res) => {
           sessionType: 'user',
           supabaseUserId: user.id,
           supabaseEmail: user.email ?? null,
+          roles: (() => {
+            const roles = extractRoles((user as any)?.app_metadata?.roles);
+            return roles.length ? roles : null;
+          })(),
         });
       } catch (error: any) {
         realtimeLog.warn(
@@ -268,6 +284,7 @@ app.post('/realtime/sessions', async (req, res) => {
       walletAssignment = await ensureUserWallet(env, {
         supabaseUserId: identity.supabaseUserId,
         email: identity.supabaseEmail ?? null,
+        roles: identity.roles ?? null,
       });
     }
 
@@ -876,6 +893,34 @@ async function deleteProbeUser(user: ProbeUser | null) {
   }
 }
 
+async function releaseWalletAssignmentsForUser(userId: string) {
+  if (!userId) {
+    return;
+  }
+  try {
+    const released = await prisma.managed_wallets.updateMany({
+      where: { assigned_supabase_user_id: userId },
+      data: {
+        status: 'available',
+        assigned_supabase_user_id: null,
+        assigned_email: null,
+        assigned_provider: null,
+        assigned_subject: null,
+        assigned_at: null,
+      },
+    });
+    if (released.count > 0) {
+      healthLog.info(
+        `${style.status('cleanup', 'info')} ${style.kv('user', userId)} ${style.kv('released_wallets', released.count)}`
+      );
+    }
+  } catch (err) {
+    healthLog.warn(
+      `${style.status('cleanup', 'warn')} ${style.kv('user', userId)} ${style.kv('error', err instanceof Error ? err.message : String(err))}`
+    );
+  }
+}
+
 async function probeConnector(target: ConnectorProbeTarget): Promise<ConnectorProbeResult> {
   const start = Date.now();
   const apiBase = `http://127.0.0.1:${env.PORT}/api/`;
@@ -953,6 +998,9 @@ async function probeConnector(target: ConnectorProbeTarget): Promise<ConnectorPr
     );
   } finally {
     result.duration_ms = Date.now() - start;
+    if (user?.userId) {
+      await releaseWalletAssignmentsForUser(user.userId);
+    }
     await deleteProbeUser(user);
   }
   return result;

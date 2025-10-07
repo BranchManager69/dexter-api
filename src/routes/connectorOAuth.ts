@@ -75,6 +75,27 @@ function registerDefaultPlatform(clientId: string, platform: string) {
   }
 }
 
+function extractRoles(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (entry == null) return '';
+        try {
+          return String(entry).trim().toLowerCase();
+        } catch {
+          return '';
+        }
+      })
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const lowered = value.trim().toLowerCase();
+    return lowered ? [lowered] : [];
+  }
+  return [];
+}
+
 (function hydrateMobileRedirectTemplates() {
   const raw = process.env.CONNECTOR_MOBILE_REDIRECTS || '';
   for (const entry of raw.split(',').map((s) => s.trim()).filter(Boolean)) {
@@ -617,8 +638,29 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
           throw new Error('supabase_user_missing');
         }
 
+        let supabaseEmail: string | null = null;
+        let userRoles: string[] | null = null;
+        if (accessToken) {
+          try {
+            const supabaseUser = await getSupabaseUserFromAccessToken(accessToken);
+            if (!supabaseUserId && supabaseUser?.id) {
+              supabaseUserId = supabaseUser.id;
+            }
+            supabaseEmail = (supabaseUser as any)?.email ?? null;
+            const roles = extractRoles((supabaseUser as any)?.app_metadata?.roles);
+            userRoles = roles.length ? roles : null;
+          } catch (userErr) {
+            log.warn(
+              `${style.status('token', 'warn')} ${style.kv('grant', 'authorization_code')} ${style.kv('fallback', 'roles_lookup_failed')} ${style.kv('error', (userErr as Error)?.message || userErr)}`,
+              userErr
+            );
+          }
+        }
+
         const walletAssignment = await ensureUserWallet(env, {
           supabaseUserId,
+          email: supabaseEmail,
+          roles: userRoles,
         });
 
         const body: Record<string, unknown> = {
@@ -634,8 +676,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         }
         const dexterMcpJwt = walletAssignment?.mcpJwt || issueMcpJwt(env, {
           supabase_user_id: supabaseUserId,
+          supabase_email: supabaseEmail,
           scope: record.scope || null,
           wallet_public_key: walletAssignment?.wallet.public_key ?? null,
+          roles: userRoles,
         });
         if (dexterMcpJwt) {
           body.dexter_mcp_jwt = dexterMcpJwt;
@@ -679,11 +723,31 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         const session = await exchangeRefreshToken(refreshToken);
         const accessToken = session.access_token;
         const nextRefreshToken = session.refresh_token || refreshToken;
-        const supabaseUserId = session.user?.id || null;
+        let supabaseUserId = session.user?.id || null;
         const expiresIn = session.expires_in || getConnectorTokenTTLSeconds();
+
+        let supabaseEmail: string | null = null;
+        let userRoles: string[] | null = null;
+        if (accessToken) {
+          try {
+            const supabaseUser = await getSupabaseUserFromAccessToken(accessToken);
+            supabaseUserId = supabaseUser?.id || supabaseUserId;
+            supabaseEmail = (supabaseUser as any)?.email ?? null;
+            const roles = extractRoles((supabaseUser as any)?.app_metadata?.roles);
+            userRoles = roles.length ? roles : null;
+          } catch (userErr) {
+            log.warn(
+              `${style.status('token', 'warn')} ${style.kv('grant', 'refresh_token')} ${style.kv('fallback', 'roles_lookup_failed')} ${style.kv('error', (userErr as Error)?.message || userErr)}`,
+              userErr
+            );
+          }
+        }
+
         const walletAssignment = supabaseUserId
           ? await ensureUserWallet(env, {
               supabaseUserId,
+              email: supabaseEmail,
+              roles: userRoles,
             })
           : null;
 
@@ -699,8 +763,10 @@ export function registerConnectorOAuthRoutes(app: Express, env: Env) {
         }
         const dexterMcpJwt = walletAssignment?.mcpJwt || issueMcpJwt(env, {
           supabase_user_id: supabaseUserId,
+          supabase_email: supabaseEmail,
           scope: null,
           wallet_public_key: walletAssignment?.wallet.public_key ?? null,
+          roles: userRoles,
         });
         if (dexterMcpJwt) {
           body.dexter_mcp_jwt = dexterMcpJwt;

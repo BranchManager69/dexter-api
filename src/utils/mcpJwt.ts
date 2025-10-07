@@ -6,6 +6,7 @@ export type McpJwtPayload = {
   supabase_email?: string | null;
   scope?: string | null;
   wallet_public_key?: string | null;
+  roles?: string[] | null;
 };
 
 function resolveIssuer(url: string): string {
@@ -54,6 +55,19 @@ export function issueMcpJwt(
   }
   if (payload.wallet_public_key) {
     tokenPayload.wallet_public_key = payload.wallet_public_key;
+  }
+  if (Array.isArray(payload.roles) && payload.roles.length > 0) {
+    const normalizedRoles = payload.roles
+      .map((role) => {
+        if (role == null) {
+          return '';
+        }
+        return String(role).trim().toLowerCase();
+      })
+      .filter(Boolean);
+    if (normalizedRoles.length > 0) {
+      tokenPayload.roles = normalizedRoles;
+    }
   }
 
   return jwt.sign(tokenPayload, secret, {

@@ -15,8 +15,18 @@ function extractBearerToken(req: Request): string | null {
 
 function extractRoles(value: unknown): string[] {
   if (!value) return [];
-  if (Array.isArray(value)) return value.map((entry) => String(entry).toLowerCase());
-  if (typeof value === 'string') return [value.toLowerCase()];
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (entry == null) return '';
+        return String(entry).trim().toLowerCase();
+      })
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const lowered = value.trim().toLowerCase();
+    return lowered ? [lowered] : [];
+  }
   return [];
 }
 

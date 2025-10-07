@@ -11,6 +11,7 @@ export type WalletAssignmentOptions = {
   email?: string | null;
   provider?: string | null;
   subject?: string | null;
+  roles?: string[] | null;
 };
 
 export type WalletAssignmentResult = {
@@ -106,6 +107,7 @@ export async function ensureUserWallet(env: Env, options: WalletAssignmentOption
       supabase_user_id: supabaseUserId,
       supabase_email: options.email ?? null,
       wallet_public_key: wallet.public_key,
+      roles: options.roles ?? null,
     });
   } catch (error: any) {
     log.error(

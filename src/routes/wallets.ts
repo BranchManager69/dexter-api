@@ -8,6 +8,23 @@ import { getSupabaseUserFromAccessToken } from '../utils/supabaseAdmin.js';
 import { loadManagedWallet } from '../wallets/manager.js';
 import bs58 from 'bs58';
 
+function extractRoles(value: unknown): string[] {
+  if (!value) return [];
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => {
+        if (entry == null) return '';
+        return String(entry).trim().toLowerCase();
+      })
+      .filter(Boolean);
+  }
+  if (typeof value === 'string') {
+    const lowered = value.trim().toLowerCase();
+    return lowered ? [lowered] : [];
+  }
+  return [];
+}
+
 type SerializedWallet = {
   publicKey: string;
   label: string | null;
@@ -87,9 +104,12 @@ export function registerWalletRoutes(app: Express, env: Env) {
       }
 
       let email: string | null = null;
+      let roles: string[] | null = null;
       try {
         const user = await getSupabaseUserFromAccessToken(bearerToken);
         email = user.email ?? null;
+        const normalizedRoles = extractRoles((user as any)?.app_metadata?.roles);
+        roles = normalizedRoles.length ? normalizedRoles : null;
       } catch (error: any) {
         log.warn(
           `${style.status('wallet', 'warn')} ${style.kv('event', 'supabase_user_lookup_failed')} ${style.kv('reason', error?.message || error)}`,
@@ -100,6 +120,7 @@ export function registerWalletRoutes(app: Express, env: Env) {
       const assignment = await ensureUserWallet(env, {
         supabaseUserId,
         email,
+        roles,
       });
 
       if (!assignment) {

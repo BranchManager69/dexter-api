@@ -25,6 +25,7 @@ import { registerConnectorOAuthRoutes } from './routes/connectorOAuth.js';
 import { registerMcpDcrRoutes } from './routes/mcpDcr.js';
 import { registerX402Routes } from './payments/registerX402.js';
 import { registerSolanaRoutes } from './routes/solana.js';
+import { registerTokenConfigRoutes } from './routes/tokenConfig.js';
 import { registerStreamSceneRoutes } from './routes/streamScenes.js';
 import { registerPromptModuleRoutes } from './routes/promptModules.js';
 import { registerPromptProfileRoutes } from './routes/promptProfiles.js';
@@ -33,6 +34,7 @@ import { registerDossierRoutes } from './routes/dossier.js';
 import { registerRealtimeMemoryRoutes } from './routes/realtimeMemories.js';
 import { buildUserMemoryInstructions } from './utils/memory.js';
 import { logger, style } from './logger.js';
+import { startTokenConfigRefreshLoop } from './tasks/tokenConfigRefresh.js';
 
 export const env = loadEnv();
 export const app = express();
@@ -695,6 +697,7 @@ app.get('/api/tools', handleToolsListing);
 
 registerAuthConfigRoute(app);
 registerWalletRoutes(app, env);
+registerTokenConfigRoutes(app, env);
 registerConnectorOAuthRoutes(app, env);
 registerMcpDcrRoutes(app);
 registerX402Routes(app, env);
@@ -705,6 +708,8 @@ registerPromptProfileRoutes(app);
 registerConversationLogRoutes(app);
 registerDossierRoutes(app);
 registerRealtimeMemoryRoutes(app);
+
+startTokenConfigRefreshLoop(env);
 
 const CONNECTOR_PROBE_TARGETS = [
   {

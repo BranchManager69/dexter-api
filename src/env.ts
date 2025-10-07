@@ -15,6 +15,7 @@ function preloadParentEnv() {
       path.resolve(cwd, '../dexter-ops/.env'), // shared ops repo env fallback
     ];
     const needed = new Set([
+      'DEXTER_TOKEN_MINT',
       'OPENAI_API_KEY',
       'OPENAI_REALTIME_MODEL',
       'TEXT_MODEL',
@@ -111,6 +112,7 @@ const envSchema = z.object({
   SUPABASE_ANON_KEY: z.string().optional().default(''),
   SUPABASE_SERVICE_ROLE_KEY: z.string().optional().default(''),
   SUPABASE_JWT_SECRET: z.string().optional().default(''),
+  DEXTER_TOKEN_MINT: z.string().optional().default(''),
   X402_ENABLED: z.coerce.boolean().default(true),
   X402_FACILITATOR_URL: z.string().url().default('http://127.0.0.1:4070'),
   X402_PAY_TO: z.string().min(1).default('DEXVS3su4dZQWTvvPnLDJLRK1CeeKG6K3QqdzthgAkNV'),
@@ -145,6 +147,7 @@ export function loadEnv(): Env {
     SUPABASE_ANON_KEY: process.env.SUPABASE_ANON_KEY,
     SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
     SUPABASE_JWT_SECRET: process.env.SUPABASE_JWT_SECRET,
+    DEXTER_TOKEN_MINT: process.env.DEXTER_TOKEN_MINT,
     X402_ENABLED: process.env.X402_ENABLED,
     X402_FACILITATOR_URL: process.env.X402_FACILITATOR_URL,
     X402_PAY_TO: process.env.X402_PAY_TO,

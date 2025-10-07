@@ -34,6 +34,38 @@ enum ManagedWalletStatus {
   retired
 }
 
+model token_config {
+  id              String   @id @default(uuid()) @db.Uuid
+  chain           String   @default("solana") @db.VarChar(32)
+  mint_address    String   @db.VarChar(128)
+  symbol          String?  @db.VarChar(32)
+  name            String?  @db.VarChar(255)
+  status          String   @default("draft") @db.VarChar(32)
+  metadata_source String   @default("onchain") @db.VarChar(32)
+  decimals        Int?
+  logo_url        String?  @db.Text
+  coingecko_id    String?  @db.VarChar(128)
+  supply          Decimal? @db.Decimal(40, 0)
+  metadata_uri    String?  @db.Text
+  metadata_json   Json?
+  last_synced_at  DateTime? @db.Timestamptz(6)
+  price_usd       Decimal? @db.Decimal(38, 18)
+  liquidity_usd   Decimal? @db.Decimal(38, 18)
+  volume_24h_usd  Decimal? @db.Decimal(38, 18)
+  price_change_24h Decimal? @db.Decimal(20, 4)
+  txns_24h_buys   Int?
+  txns_24h_sells  Int?
+  fdv             Decimal? @db.Decimal(38, 2)
+  market_cap      Decimal? @db.Decimal(38, 2)
+  market_data_json Json?
+  market_data_last_refreshed_at DateTime? @db.Timestamptz(6)
+  created_at      DateTime  @default(now()) @db.Timestamptz(6)
+  updated_at      DateTime  @default(now()) @updatedAt @db.Timestamptz(6)
+
+  @@unique([chain, mint_address], map: "token_config_chain_mint_unique")
+  @@map("token_config")
+}
+
 model managed_wallets {
   public_key                 String              @id @db.VarChar(44)
   encrypted_private_key      String

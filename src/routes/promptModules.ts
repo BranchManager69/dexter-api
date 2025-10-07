@@ -152,7 +152,7 @@ export function registerPromptModuleRoutes(app: Express) {
                pm.updated_at,
                pm.updated_by,
                u.email AS updated_by_email
-        FROM prompt_modules pm
+        FROM public.prompt_modules pm
         LEFT JOIN auth.users u ON u.id = pm.updated_by
         ORDER BY pm.slug ASC
       `;
@@ -183,7 +183,7 @@ export function registerPromptModuleRoutes(app: Express) {
                pm.updated_at,
                pm.updated_by,
                u.email AS updated_by_email
-        FROM prompt_modules pm
+        FROM public.prompt_modules pm
         LEFT JOIN auth.users u ON u.id = pm.updated_by
         WHERE pm.slug = ${slug}
         LIMIT 1
@@ -268,7 +268,7 @@ export function registerPromptModuleRoutes(app: Express) {
       const prompt = await prisma.$transaction(async (tx) => {
         const existing = await tx.$queryRaw<{ id: string }[]>`
           SELECT id
-          FROM prompt_modules
+          FROM public.prompt_modules
           WHERE slug = ${slug}
           LIMIT 1
           FOR UPDATE
@@ -279,7 +279,7 @@ export function registerPromptModuleRoutes(app: Express) {
         }
 
         const inserted = await tx.$queryRaw<{ id: string; slug: string; title: string | null; segment: string; version: number; checksum: string | null; created_at: Date; updated_at: Date; updated_by: string | null; updated_by_email: string | null }[]>`
-          INSERT INTO prompt_modules (slug, title, segment, checksum, version, updated_by)
+          INSERT INTO public.prompt_modules (slug, title, segment, checksum, version, updated_by)
           VALUES (
             ${slug},
             ${title},
@@ -350,7 +350,7 @@ export function registerPromptModuleRoutes(app: Express) {
       const updated = await prisma.$transaction(async (tx) => {
         const currentRows = await tx.$queryRaw<{ id: string; slug: string; title: string | null; segment: string; version: number; checksum: string | null }[]>`
           SELECT id, slug, title, segment, version, checksum
-          FROM prompt_modules
+          FROM public.prompt_modules
           WHERE slug = ${slug}
           LIMIT 1
           FOR UPDATE
@@ -390,7 +390,7 @@ export function registerPromptModuleRoutes(app: Express) {
         const nextVersion = Number(current.version) + 1;
 
         const updatedRows = await tx.$queryRaw<{ id: string; slug: string; title: string | null; segment: string; version: number; checksum: string | null; created_at: Date; updated_at: Date; updated_by: string | null; updated_by_email: string | null }[]>`
-          UPDATE prompt_modules
+          UPDATE public.prompt_modules
           SET title = ${normalizedTitle},
               segment = ${segment},
               checksum = encode(digest(${segment}, 'sha256'), 'hex'),
@@ -421,7 +421,7 @@ export function registerPromptModuleRoutes(app: Express) {
                  pm.updated_at,
                  pm.updated_by,
                  u.email AS updated_by_email
-          FROM prompt_modules pm
+          FROM public.prompt_modules pm
           LEFT JOIN auth.users u ON u.id = pm.updated_by
           WHERE pm.slug = ${slug}
           LIMIT 1

@@ -1,11 +1,21 @@
 import { PrismaClient } from '@prisma/client';
 
 try {
-  const dbUrl = process.env.DATABASE_URL || '';
-  if (dbUrl && /pooler\.supabase\.com/.test(dbUrl) && !/pgbouncer=true/i.test(dbUrl)) {
-    const connector = dbUrl.includes('?') ? '&' : '?';
-    const extras = 'pgbouncer=true&connection_limit=1';
-    process.env.DATABASE_URL = `${dbUrl}${connector}${extras}`;
+  const rawUrl = process.env.DATABASE_URL || '';
+  if (rawUrl) {
+    const url = new URL(rawUrl);
+    const existingOptions = url.searchParams.get('options') || '';
+    if (!/search_path\s*=/i.test(existingOptions)) {
+      const mergedOptions = existingOptions
+        ? `${existingOptions} -c search_path=public`
+        : '-c search_path=public';
+      url.searchParams.set('options', mergedOptions);
+    }
+    if (/pooler\.supabase\.com/i.test(url.hostname)) {
+      url.searchParams.set('pgbouncer', 'true');
+      url.searchParams.set('connection_limit', '1');
+    }
+    process.env.DATABASE_URL = url.toString();
   }
 } catch {}
 

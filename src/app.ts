@@ -14,6 +14,7 @@ import { chatStreamHandler } from './chatStream.js';
 import { buildSpecialistAgents } from './agents.js';
 import { resolveConciergeProfile, fetchResolvedProfileForUser, missingPromptFallback } from './promptProfiles.js';
 import { createRealtimeSessionWithEnv, type SessionIdentity } from './realtime.js';
+import { sendRealtimeBroadcast, RealtimeBroadcastError } from './realtimeServerClient.js';
 import { ensureUserWallet } from './wallets/allocator.js';
 import { getSupabaseUserFromAccessToken } from './utils/supabaseAdmin.js';
 import prisma from './prisma.js';
@@ -66,6 +67,18 @@ function extractRoles(value: unknown): string[] {
   if (Array.isArray(value)) return value.map((entry) => String(entry).toLowerCase());
   if (typeof value === 'string') return [value.toLowerCase()];
   return [];
+}
+
+function normalizeBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const lowered = value.trim().toLowerCase();
+    return lowered === 'true' || lowered === '1' || lowered === 'yes';
+  }
+  if (typeof value === 'number') {
+    return value === 1;
+  }
+  return false;
 }
 
 function isAdminUser(user: { app_metadata?: Record<string, unknown> | null }): boolean {
@@ -281,6 +294,58 @@ app.post('/realtime/sessions', async (req, res) => {
       memoryInstructions,
     });
 
+    try {
+      if (identity.sessionType === 'user' && identity.supabaseUserId) {
+        const sessionId = typeof out?.id === 'string' && out.id.trim().length ? out.id.trim() : null;
+        const clientSecret = typeof out?.client_secret?.value === 'string'
+          ? out.client_secret.value
+          : typeof out?.client_secret === 'string'
+            ? out.client_secret
+            : null;
+        if (sessionId && clientSecret) {
+          const expiresAtIso = (() => {
+            const raw = (out as any)?.expires_at;
+            if (typeof raw === 'number' && Number.isFinite(raw)) {
+              return new Date(raw * 1000);
+            }
+            if (typeof raw === 'string' && raw.trim().length) {
+              const parsed = Number(raw);
+              if (Number.isFinite(parsed)) {
+                return new Date(parsed * 1000);
+              }
+              const date = new Date(raw);
+              if (!Number.isNaN(date.getTime())) return date;
+            }
+            return new Date(Date.now() + 60 * 60 * 1000);
+          })();
+
+          await prisma.realtime_sessions.upsert({
+            where: { session_id: sessionId },
+            create: {
+              session_id: sessionId,
+              supabase_user_id: identity.supabaseUserId,
+              client_secret: clientSecret,
+              model,
+              voice: voice || null,
+              expires_at: expiresAtIso,
+            },
+            update: {
+              supabase_user_id: identity.supabaseUserId,
+              client_secret: clientSecret,
+              model,
+              voice: voice || null,
+              expires_at: expiresAtIso,
+            },
+          });
+        }
+      }
+    } catch (error: any) {
+      realtimeLog.warn(
+        `${style.status('session', 'warn')} ${style.kv('error', error?.message || error)}`,
+        error
+      );
+    }
+
     return res.json({
       ...out,
       dexter_session: {
@@ -308,6 +373,215 @@ app.post('/realtime/sessions', async (req, res) => {
     const msg = err?.message || String(err);
     return res.status(500).json({ ok: false, error: msg });
   }
+});
+
+app.delete('/realtime/sessions/:id', async (req, res) => {
+  if (!env.OPENAI_API_KEY) {
+    return res.status(501).json({ ok: false, error: 'OPENAI_API_KEY not configured' });
+  }
+
+  const sessionId = typeof req.params?.id === 'string' ? req.params.id.trim() : '';
+  if (!sessionId) {
+    return res.status(400).json({ ok: false, error: 'session_id_required' });
+  }
+
+  const authorization = (req.headers['authorization'] || req.headers['Authorization']) as string | undefined;
+  if (!authorization || !authorization.toLowerCase().startsWith('bearer ')) {
+    return res.status(401).json({ ok: false, error: 'authentication_required' });
+  }
+
+  const accessToken = authorization.split(' ')[1]?.trim();
+  if (!accessToken) {
+    return res.status(401).json({ ok: false, error: 'authentication_required' });
+  }
+
+  try {
+    const user = await getSupabaseUserFromAccessToken(accessToken);
+    await prisma.realtime_sessions.deleteMany({
+      where: {
+        session_id: sessionId,
+        supabase_user_id: String(user.id),
+      },
+    });
+    return res.json({ ok: true });
+  } catch (error: any) {
+    realtimeLog.warn(
+      `${style.status('session', 'warn')} ${style.kv('error', error?.message || error)}`,
+      error
+    );
+    return res.status(403).json({ ok: false, error: 'authentication_required' });
+  }
+});
+
+app.post('/internal/realtime/broadcast', async (req, res) => {
+  if (!env.REALTIME_BROADCAST_TOKEN) {
+    return res.status(503).json({ ok: false, error: 'broadcast_token_not_configured' });
+  }
+
+  const authHeader = (req.headers['authorization'] || req.headers['Authorization']) as string | undefined;
+  const headerToken = Array.isArray(req.headers['x-broadcast-token'])
+    ? req.headers['x-broadcast-token'][0]
+    : (req.headers['x-broadcast-token'] as string | undefined);
+
+  let authorized = false;
+  let actorSupabaseUserId: string | null = null;
+
+  const providedToken = headerToken && headerToken.trim() ? headerToken.trim() : '';
+  if (env.REALTIME_BROADCAST_TOKEN && providedToken === env.REALTIME_BROADCAST_TOKEN) {
+    authorized = true;
+  }
+
+  if (!authorized && authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    const [, value] = authHeader.split(' ', 2);
+    const bearerToken = value?.trim();
+    if (bearerToken) {
+      try {
+        const user = await getSupabaseUserFromAccessToken(bearerToken);
+        const roles = extractRoles((user as any)?.app_metadata?.roles);
+        const meta = (user as any)?.user_metadata ?? {};
+        const isSuperAdmin = roles.includes('superadmin') || normalizeBoolean(meta?.isSuperAdmin);
+        if (isSuperAdmin) {
+          authorized = true;
+          actorSupabaseUserId = String(user.id);
+        }
+      } catch (error: any) {
+        realtimeLog.warn(
+          `${style.status('broadcast', 'warn')} ${style.kv('auth_error', error?.message || error)}`,
+          error
+        );
+      }
+    }
+  }
+
+  if (!authorized) {
+    return res.status(403).json({ ok: false, error: 'forbidden' });
+  }
+
+  const targetsRaw = Array.isArray(req.body?.targets) ? req.body.targets : [];
+  const targets = targetsRaw
+    .map((entry: unknown) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter(Boolean);
+
+  if (!targets.length) {
+    return res.status(400).json({ ok: false, error: 'targets_required' });
+  }
+
+  let prompt = typeof req.body?.prompt === 'string' ? req.body.prompt.trim() : '';
+  if (!prompt) {
+    return res.status(400).json({ ok: false, error: 'prompt_required' });
+  }
+  if (prompt.length > 200) {
+    prompt = prompt.slice(0, 200).trim();
+  }
+
+  const now = new Date();
+  try {
+    await prisma.realtime_sessions.deleteMany({ where: { expires_at: { lte: now } } });
+  } catch (cleanupError: any) {
+    realtimeLog.warn(
+      `${style.status('cleanup', 'warn')} ${style.kv('error', cleanupError?.message || cleanupError)}`,
+      cleanupError
+    );
+  }
+  const uniqueSessions = new Map<string, { session_id: string; supabase_user_id: string; client_secret: string }>();
+
+  try {
+    if (targets.includes('all')) {
+      const rows = await prisma.realtime_sessions.findMany({
+        where: { expires_at: { gt: now } },
+      });
+      for (const row of rows) {
+        uniqueSessions.set(row.session_id, {
+          session_id: row.session_id,
+          supabase_user_id: row.supabase_user_id,
+          client_secret: row.client_secret,
+        });
+      }
+    }
+
+    if (targets.includes('supabase_user_id')) {
+      const targetId = typeof req.body?.supabaseUserId === 'string' ? req.body.supabaseUserId.trim() : '';
+      if (!targetId) {
+        return res.status(400).json({ ok: false, error: 'supabase_user_id_required' });
+      }
+      const rows = await prisma.realtime_sessions.findMany({
+        where: {
+          supabase_user_id: targetId,
+          expires_at: { gt: now },
+        },
+      });
+      for (const row of rows) {
+        uniqueSessions.set(row.session_id, {
+          session_id: row.session_id,
+          supabase_user_id: row.supabase_user_id,
+          client_secret: row.client_secret,
+        });
+      }
+    }
+  } catch (error: any) {
+    realtimeLog.error(
+      `${style.status('broadcast', 'error')} ${style.kv('error', error?.message || error)}`,
+      error
+    );
+    return res.status(500).json({ ok: false, error: 'broadcast_lookup_failed' });
+  }
+
+  if (!uniqueSessions.size) {
+    return res.json({ ok: true, delivered: 0, failed: 0, removed: 0, prompt });
+  }
+
+  let delivered = 0;
+  let failed = 0;
+  const staleSessionIds: string[] = [];
+
+  for (const session of uniqueSessions.values()) {
+    try {
+      await sendRealtimeBroadcast(env, {
+        sessionId: session.session_id,
+        clientSecret: session.client_secret,
+      }, prompt);
+      delivered += 1;
+    } catch (error: any) {
+      failed += 1;
+      const status = error instanceof RealtimeBroadcastError ? error.status : undefined;
+      if (status === 401 || status === 403 || status === 404) {
+        staleSessionIds.push(session.session_id);
+      }
+      realtimeLog.warn(
+        `${style.status('broadcast', 'warn')} ${style.kv('session', session.session_id)} ${style.kv('error', error?.message || error)}`,
+        error
+      );
+    }
+  }
+
+  if (staleSessionIds.length) {
+    try {
+      await prisma.realtime_sessions.deleteMany({ where: { session_id: { in: staleSessionIds } } });
+    } catch (error: any) {
+      realtimeLog.warn(
+        `${style.status('cleanup', 'warn')} ${style.kv('error', error?.message || error)}`,
+        error
+      );
+    }
+  }
+
+  try {
+    realtimeLog.info(
+      `${style.status('broadcast', 'success')} ${style.kv('prompt', prompt)} ${style.kv('requested', uniqueSessions.size)} ${style.kv('delivered', delivered)} ${style.kv('failed', failed)}`,
+      {
+        actorSupabaseUserId: actorSupabaseUserId,
+      }
+    );
+  } catch {}
+
+  return res.json({
+    ok: true,
+    requested: uniqueSessions.size,
+    delivered,
+    failed,
+    removed: staleSessionIds.length,
+    prompt,
+  });
 });
 
 // Canonical chat endpoint (Agents SDK)

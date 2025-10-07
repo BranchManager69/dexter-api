@@ -66,6 +66,7 @@ export function registerConversationLogRoutes(app: Express) {
       const transcript = sanitizeJson(req.body?.transcript);
       const toolCalls = sanitizeJson(req.body?.toolCalls);
       const metadata = sanitizeJson(req.body?.metadata) ?? {};
+      const usageSummaryRaw = sanitizeJson(req.body?.usage);
 
       const status = typeof req.body?.status === 'string' ? req.body.status.trim() : 'pending_summary';
 
@@ -107,6 +108,28 @@ export function registerConversationLogRoutes(app: Express) {
           status: record.status,
         }
       );
+
+      try {
+        const updateData: Record<string, any> = {
+          client_secret: '__expired__',
+          expires_at: new Date(),
+        };
+        if (usageSummaryRaw && typeof usageSummaryRaw === 'object') {
+          updateData.usage_summary = usageSummaryRaw;
+        }
+        await prisma.realtime_sessions.updateMany({
+          where: {
+            session_id: sessionId,
+            supabase_user_id: supabaseUserId,
+          },
+          data: updateData,
+        });
+      } catch (cleanupError: any) {
+        log.warn(
+          `${style.status('log', 'warn')} ${style.kv('cleanup_error', cleanupError?.message || cleanupError)}`,
+          cleanupError
+        );
+      }
 
       return res.json({ ok: true, id: record.id, status: record.status });
     } catch (error: any) {

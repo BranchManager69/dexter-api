@@ -11,6 +11,7 @@ import {
   previewSwap,
   resolveToken,
 } from '../solana/tradingService.js';
+import { launchPumpFunToken, PumpFunImageInput } from '../solana/pumpfunService.js';
 import { logger, style } from '../logger.js';
 
 function parseNumber(input: unknown, fallback = 0): number {
@@ -286,6 +287,94 @@ export function registerSolanaRoutes(app: Express) {
     } catch (error: any) {
       log.error(`${style.status('balances', 'error')} ${style.kv('error', error?.message || error)}`, error);
       return res.status(500).json({ ok: false, error: error?.message || 'internal_error' });
+    }
+  });
+
+  app.post('/api/solana/pumpfun/launch', async (req: Request, res: Response) => {
+    try {
+      const supabaseUserId = await getSupabaseUserIdFromRequest(req);
+      const walletAddress = typeof req.body?.walletAddress === 'string' ? req.body.walletAddress.trim() : '';
+      if (!walletAddress) {
+        return res.status(400).json({ ok: false, error: 'wallet_address_required' });
+      }
+
+      const walletRecord = await prisma.managed_wallets.findUnique({ where: { public_key: walletAddress } });
+      if (!walletRecord) {
+        return res.status(404).json({ ok: false, error: 'wallet_not_found' });
+      }
+
+      if (walletRecord.assigned_supabase_user_id && walletRecord.assigned_supabase_user_id !== supabaseUserId) {
+        return res.status(403).json({ ok: false, error: 'forbidden_wallet' });
+      }
+
+      const metadataPayload = req.body?.metadata ?? {};
+      const metadataName = typeof metadataPayload?.name === 'string' ? metadataPayload.name.trim() : '';
+      const metadataSymbol = typeof metadataPayload?.symbol === 'string' ? metadataPayload.symbol.trim() : '';
+      if (!metadataName || !metadataSymbol) {
+        return res.status(400).json({ ok: false, error: 'metadata_name_symbol_required' });
+      }
+
+      const parseImageInput = (payload: any): PumpFunImageInput | null => {
+        if (payload?.kind === 'url' && typeof payload?.url === 'string') {
+          return {
+            kind: 'url',
+            url: String(payload.url),
+            filename: typeof payload?.filename === 'string' ? payload.filename : undefined,
+          };
+        }
+        if (payload?.kind === 'base64' && typeof payload?.base64 === 'string') {
+          return {
+            kind: 'base64',
+            base64: payload.base64,
+            contentType: typeof payload?.contentType === 'string' ? payload.contentType : undefined,
+            filename: typeof payload?.filename === 'string' ? payload.filename : undefined,
+          };
+        }
+        if (typeof payload?.imageUrl === 'string') {
+          return {
+            kind: 'url',
+            url: payload.imageUrl,
+            filename: typeof payload?.imageFilename === 'string' ? payload.imageFilename : undefined,
+          };
+        }
+        if (typeof payload?.imageBase64 === 'string') {
+          return {
+            kind: 'base64',
+            base64: payload.imageBase64,
+            contentType: typeof payload?.imageContentType === 'string' ? payload.imageContentType : undefined,
+            filename: typeof payload?.imageFilename === 'string' ? payload.imageFilename : undefined,
+          };
+        }
+        return null;
+      };
+
+      const imageInput = parseImageInput(metadataPayload?.image) ?? parseImageInput(metadataPayload);
+      if (!imageInput) {
+        return res.status(400).json({ ok: false, error: 'metadata_image_required' });
+      }
+
+      const result = await launchPumpFunToken({
+        creatorWalletAddress: walletAddress,
+        metadata: {
+          name: metadataName,
+          symbol: metadataSymbol,
+          description: typeof metadataPayload?.description === 'string' ? metadataPayload.description : undefined,
+          image: imageInput,
+          showName: metadataPayload?.showName != null ? Boolean(metadataPayload.showName) : undefined,
+          twitter: typeof metadataPayload?.twitter === 'string' ? metadataPayload.twitter : undefined,
+          telegram: typeof metadataPayload?.telegram === 'string' ? metadataPayload.telegram : undefined,
+          website: typeof metadataPayload?.website === 'string' ? metadataPayload.website : undefined,
+        },
+        devBuySol: req.body?.devBuySol != null ? Number(req.body.devBuySol) : undefined,
+        slippagePercent: req.body?.slippagePercent != null ? Number(req.body.slippagePercent) : undefined,
+        priorityFeeLamports: req.body?.priorityFeeLamports != null ? Number(req.body.priorityFeeLamports) : undefined,
+        simulateOnly: Boolean(req.body?.simulateOnly),
+      });
+
+      return res.json({ ok: true, result });
+    } catch (error: any) {
+      log.error(`${style.status('pumpfun', 'error')} ${style.kv('error', error?.message || error)}`, error);
+      return res.status(400).json({ ok: false, error: error?.message || 'pumpfun_launch_failed' });
     }
   });
 

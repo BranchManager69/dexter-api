@@ -222,14 +222,16 @@ model user_memories {
 }
 
 model realtime_sessions {
-  session_id       String   @id @db.VarChar(255)
-  supabase_user_id String   @db.Uuid
-  client_secret    String   @db.Text
-  model            String   @db.VarChar(128)
-  voice            String?  @db.VarChar(128)
-  created_at       DateTime @default(now()) @db.Timestamptz(6)
-  expires_at       DateTime @db.Timestamptz(6)
-  usage_summary    Json     @default("{}")
+  session_id        String   @id @db.VarChar(255)
+  supabase_user_id  String?  @db.Uuid
+  guest_session_id  String?  @db.Uuid
+  client_secret     String   @db.Text
+  model             String   @db.VarChar(128)
+  voice             String?  @db.VarChar(128)
+  created_at        DateTime @default(now()) @db.Timestamptz(6)
+  expires_at        DateTime @db.Timestamptz(6)
+  usage_summary     Json     @default("{}")
+  guest_metadata    Json?    @default("{}")
 
   @@index([supabase_user_id], map: "idx_realtime_sessions_user")
   @@index([expires_at], map: "idx_realtime_sessions_expires_at")

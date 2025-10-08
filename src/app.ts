@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import type { Request, Response } from 'express';
 import crypto from 'node:crypto';
+import { Prisma } from '@prisma/client';
 import fs from 'node:fs';
 import path from 'node:path';
 import { loadEnv } from './env.js';
@@ -313,47 +314,88 @@ app.post('/realtime/sessions', async (req, res) => {
       memoryInstructions,
     });
 
+    let persistedGuestSessionId: string | null = null;
     try {
-      if (identity.sessionType === 'user' && identity.supabaseUserId) {
-        const sessionId = typeof out?.id === 'string' && out.id.trim().length ? out.id.trim() : null;
-        const clientSecret = typeof out?.client_secret?.value === 'string'
-          ? out.client_secret.value
-          : typeof out?.client_secret === 'string'
-            ? out.client_secret
-            : null;
-        if (sessionId && clientSecret) {
-          const expiresAtIso = (() => {
-            const raw = (out as any)?.expires_at;
-            if (typeof raw === 'number' && Number.isFinite(raw)) {
-              return new Date(raw * 1000);
+      const sessionId = typeof out?.id === 'string' && out.id.trim().length ? out.id.trim() : null;
+      const clientSecret = typeof out?.client_secret?.value === 'string'
+        ? out.client_secret.value
+        : typeof out?.client_secret === 'string'
+          ? out.client_secret
+          : null;
+      if (sessionId && clientSecret) {
+        const fallbackExpiry = new Date(Date.now() + 60 * 60 * 1000);
+        const expiresAtIso = (() => {
+          const raw = (out as any)?.expires_at;
+          const ensureFuture = (candidate: Date) => {
+            if (!Number.isFinite(candidate.getTime())) return fallbackExpiry;
+            if (candidate.getTime() <= Date.now()) return fallbackExpiry;
+            return candidate;
+          };
+          if (typeof raw === 'number' && Number.isFinite(raw)) {
+            return ensureFuture(new Date(raw * 1000));
+          }
+          if (typeof raw === 'string' && raw.trim().length) {
+            const asNumber = Number(raw);
+            if (Number.isFinite(asNumber)) {
+              return ensureFuture(new Date(asNumber * 1000));
             }
-            if (typeof raw === 'string' && raw.trim().length) {
-              const parsed = Number(raw);
-              if (Number.isFinite(parsed)) {
-                return new Date(parsed * 1000);
-              }
-              const date = new Date(raw);
-              if (!Number.isNaN(date.getTime())) return date;
-            }
-            return new Date(Date.now() + 60 * 60 * 1000);
-          })();
+            const parsedDate = new Date(raw);
+            if (!Number.isNaN(parsedDate.getTime())) return ensureFuture(parsedDate);
+          }
+          return fallbackExpiry;
+        })();
 
+        if (identity.sessionType === 'user' && identity.supabaseUserId) {
           await prisma.realtime_sessions.upsert({
             where: { session_id: sessionId },
             create: {
               session_id: sessionId,
               supabase_user_id: identity.supabaseUserId,
+              guest_session_id: null,
               client_secret: clientSecret,
               model,
               voice: voice || null,
               expires_at: expiresAtIso,
+              guest_metadata: Prisma.DbNull,
             },
             update: {
               supabase_user_id: identity.supabaseUserId,
+              guest_session_id: null,
               client_secret: clientSecret,
               model,
               voice: voice || null,
               expires_at: expiresAtIso,
+              guest_metadata: Prisma.DbNull,
+            },
+          });
+        } else if (identity.sessionType === 'guest') {
+          persistedGuestSessionId = crypto.randomUUID();
+          const guestMetadata = {
+            label: guestProfile?.label ?? null,
+            ip: req.ip ?? null,
+            userAgent: typeof req.headers['user-agent'] === 'string' ? req.headers['user-agent'] : null,
+          };
+
+          await prisma.realtime_sessions.upsert({
+            where: { session_id: sessionId },
+            create: {
+              session_id: sessionId,
+              supabase_user_id: null,
+              guest_session_id: persistedGuestSessionId,
+              client_secret: clientSecret,
+              model,
+              voice: voice || null,
+              expires_at: expiresAtIso,
+              guest_metadata: guestMetadata,
+            },
+            update: {
+              supabase_user_id: null,
+              guest_session_id: persistedGuestSessionId,
+              client_secret: clientSecret,
+              model,
+              voice: voice || null,
+              expires_at: expiresAtIso,
+              guest_metadata: guestMetadata,
             },
           });
         }
@@ -371,6 +413,9 @@ app.post('/realtime/sessions', async (req, res) => {
         type: identity.sessionType,
         user: identity.sessionType === 'user'
           ? { id: identity.supabaseUserId, email: identity.supabaseEmail }
+          : null,
+        guest: identity.sessionType === 'guest'
+          ? { session_id: persistedGuestSessionId }
           : null,
         guest_profile: guestProfile,
         wallet: walletAssignment?.wallet
@@ -405,30 +450,60 @@ app.delete('/realtime/sessions/:id', async (req, res) => {
   }
 
   const authorization = (req.headers['authorization'] || req.headers['Authorization']) as string | undefined;
-  if (!authorization || !authorization.toLowerCase().startsWith('bearer ')) {
-    return res.status(401).json({ ok: false, error: 'authentication_required' });
+  const headerToken = Array.isArray(req.headers['x-broadcast-token'])
+    ? req.headers['x-broadcast-token'][0]
+    : (req.headers['x-broadcast-token'] as string | undefined);
+
+  let actorSupabaseUserId: string | null = null;
+  let authorizedAdmin = false;
+
+  const providedAdminToken = headerToken && headerToken.trim() ? headerToken.trim() : '';
+  if (env.REALTIME_BROADCAST_TOKEN && providedAdminToken === env.REALTIME_BROADCAST_TOKEN) {
+    authorizedAdmin = true;
   }
 
-  const accessToken = authorization.split(' ')[1]?.trim();
-  if (!accessToken) {
+  const accessToken = authorization && authorization.toLowerCase().startsWith('bearer ')
+    ? authorization.split(' ')[1]?.trim()
+    : '';
+
+  if (accessToken) {
+    try {
+      const user = await getSupabaseUserFromAccessToken(accessToken);
+      actorSupabaseUserId = String(user.id);
+    } catch (error: any) {
+      realtimeLog.warn(
+        `${style.status('session', 'warn')} ${style.kv('error', error?.message || error)}`,
+        error
+      );
+    }
+  }
+
+  if (!actorSupabaseUserId && !authorizedAdmin) {
     return res.status(401).json({ ok: false, error: 'authentication_required' });
   }
 
   try {
-    const user = await getSupabaseUserFromAccessToken(accessToken);
-    await prisma.realtime_sessions.deleteMany({
-      where: {
-        session_id: sessionId,
-        supabase_user_id: String(user.id),
-      },
-    });
+    if (actorSupabaseUserId) {
+      await prisma.realtime_sessions.deleteMany({
+        where: {
+          session_id: sessionId,
+          supabase_user_id: actorSupabaseUserId,
+        },
+      });
+    } else {
+      await prisma.realtime_sessions.deleteMany({
+        where: {
+          session_id: sessionId,
+        },
+      });
+    }
     return res.json({ ok: true });
   } catch (error: any) {
     realtimeLog.warn(
       `${style.status('session', 'warn')} ${style.kv('error', error?.message || error)}`,
       error
     );
-    return res.status(403).json({ ok: false, error: 'authentication_required' });
+    return res.status(500).json({ ok: false, error: 'session_cleanup_failed' });
   }
 });
 
@@ -502,7 +577,7 @@ app.post('/internal/realtime/broadcast', async (req, res) => {
       cleanupError
     );
   }
-  const uniqueSessions = new Map<string, { session_id: string; supabase_user_id: string; client_secret: string }>();
+  const uniqueSessions = new Map<string, { session_id: string; supabase_user_id: string | null; guest_session_id: string | null; client_secret: string }>();
 
   try {
     if (targets.includes('all')) {
@@ -512,7 +587,8 @@ app.post('/internal/realtime/broadcast', async (req, res) => {
       for (const row of rows) {
         uniqueSessions.set(row.session_id, {
           session_id: row.session_id,
-          supabase_user_id: row.supabase_user_id,
+          supabase_user_id: row.supabase_user_id ?? null,
+          guest_session_id: row.guest_session_id ?? null,
           client_secret: row.client_secret,
         });
       }
@@ -532,7 +608,29 @@ app.post('/internal/realtime/broadcast', async (req, res) => {
       for (const row of rows) {
         uniqueSessions.set(row.session_id, {
           session_id: row.session_id,
-          supabase_user_id: row.supabase_user_id,
+          supabase_user_id: row.supabase_user_id ?? null,
+          guest_session_id: row.guest_session_id ?? null,
+          client_secret: row.client_secret,
+        });
+      }
+    }
+
+    if (targets.includes('guest_session_id')) {
+      const guestSessionId = typeof req.body?.guestSessionId === 'string' ? req.body.guestSessionId.trim() : '';
+      if (!guestSessionId) {
+        return res.status(400).json({ ok: false, error: 'guest_session_id_required' });
+      }
+      const rows = await prisma.realtime_sessions.findMany({
+        where: {
+          guest_session_id: guestSessionId,
+          expires_at: { gt: now },
+        },
+      });
+      for (const row of rows) {
+        uniqueSessions.set(row.session_id, {
+          session_id: row.session_id,
+          supabase_user_id: row.supabase_user_id ?? null,
+          guest_session_id: row.guest_session_id ?? null,
           client_secret: row.client_secret,
         });
       }
@@ -554,7 +652,15 @@ app.post('/internal/realtime/broadcast', async (req, res) => {
   const staleSessionIds: string[] = [];
 
   for (const session of uniqueSessions.values()) {
+    const maskedSecret = session.client_secret && session.client_secret.length >= 8
+      ? `${session.client_secret.slice(0, 4)}…${session.client_secret.slice(-4)}`
+      : session.client_secret
+        ? `${session.client_secret.slice(0, 2)}…`
+        : 'null';
     try {
+      realtimeLog.debug(
+        `${style.status('broadcast', 'info')} ${style.kv('session', session.session_id)} ${style.kv('target_user', session.supabase_user_id || 'guest')} ${style.kv('guest_session', session.guest_session_id || 'n/a')} ${style.kv('secret', maskedSecret)}`
+      );
       await sendRealtimeBroadcast(env, {
         sessionId: session.session_id,
         clientSecret: session.client_secret,
@@ -567,7 +673,7 @@ app.post('/internal/realtime/broadcast', async (req, res) => {
         staleSessionIds.push(session.session_id);
       }
       realtimeLog.warn(
-        `${style.status('broadcast', 'warn')} ${style.kv('session', session.session_id)} ${style.kv('error', error?.message || error)}`,
+        `${style.status('broadcast', 'warn')} ${style.kv('session', session.session_id)} ${style.kv('status', status ?? 'n/a')} ${style.kv('error', error?.message || error)} ${style.kv('secret', maskedSecret)}`,
         error
       );
     }

@@ -1,5 +1,6 @@
 import { Connection, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, VersionedTransaction } from '@solana/web3.js';
 import { getAssociatedTokenAddress, getAccount } from '@solana/spl-token';
+import { randomUUID } from 'crypto';
 import prisma from '../prisma.js';
 import { loadManagedWallet } from '../wallets/manager.js';
 import { fetchQuote, fetchSwapTransaction, QuoteResponse } from './jupiter.js';
@@ -632,42 +633,88 @@ export async function previewSwap(request: SwapPreviewRequest): Promise<SwapPrev
 }
 
 export async function executeSwap(request: SwapPreviewRequest): Promise<SwapExecuteResult> {
-  const context = await buildSwapQuote(request, { requireLoadedWallet: true });
-  if (!context.loadedWallet) {
-    throw new Error('wallet_load_failed');
-  }
+  const tradeId = randomUUID();
+  const startedAt = Date.now();
+  let resolvedWallet = request.walletAddress ?? null;
 
-  const swap = await fetchSwapTransaction({
-    quoteResponse: context.quote,
-    userPublicKey: context.loadedWallet.publicKey.toBase58(),
-    computeUnitPriceMicroLamports: 10_000,
+  tradeLog.info({
+    event: 'swap.start',
+    tradeId,
+    supabaseUserId: request.supabaseUserId ?? null,
+    walletAddress: resolvedWallet,
+    inputMint: request.inputMint,
+    outputMint: request.outputMint,
+    mode: request.mode ?? 'ExactIn',
+    amountUi: request.amountUi ?? null,
+    desiredOutputUi: request.desiredOutputUi ?? null,
+    slippageBps: request.slippageBps ?? 100,
   });
 
-  if (!swap.swapTransaction) {
-    const err = swap.error || swap.simulationError || 'swap_failed';
-    throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
-  }
-
-  const signature = await submitSwapTransaction(swap.swapTransaction, context.loadedWallet.keypair);
-
-  const feeLamports = context.direction === 'SOL_TO_TOKEN' ? context.preSwapFeeLamports : context.postSwapFeeLamports;
-  if (feeLamports > 0n && TREASURY_PUBLIC_KEY) {
-    try {
-      await sendLamports(context.loadedWallet.keypair, TREASURY_PUBLIC_KEY, feeLamports);
-    } catch (error) {
-      tradeLog.warn(
-        `${style.status('fee', 'warn')} ${style.kv('operation', 'swap')} ${style.kv('lamports', feeLamports.toString())}`,
-        error,
-      );
+  try {
+    const context = await buildSwapQuote(request, { requireLoadedWallet: true });
+    if (!context.loadedWallet) {
+      throw new Error('wallet_load_failed');
     }
-  }
+    resolvedWallet = context.walletAddress ?? context.loadedWallet.publicKey.toBase58();
 
-  const base = formatSwapResult(context);
-  return {
-    ...base,
-    signature,
-    solscanUrl: `https://solscan.io/tx/${signature}`,
-  };
+    const swap = await fetchSwapTransaction({
+      quoteResponse: context.quote,
+      userPublicKey: context.loadedWallet.publicKey.toBase58(),
+      computeUnitPriceMicroLamports: 10_000,
+    });
+
+    if (!swap.swapTransaction) {
+      const err = swap.error || swap.simulationError || 'swap_failed';
+      throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
+    }
+
+    const signature = await submitSwapTransaction(swap.swapTransaction, context.loadedWallet.keypair);
+
+    const feeLamports = context.direction === 'SOL_TO_TOKEN' ? context.preSwapFeeLamports : context.postSwapFeeLamports;
+    if (feeLamports > 0n && TREASURY_PUBLIC_KEY) {
+      try {
+        await sendLamports(context.loadedWallet.keypair, TREASURY_PUBLIC_KEY, feeLamports);
+      } catch (error) {
+        tradeLog.warn(
+          `${style.status('fee', 'warn')} ${style.kv('operation', 'swap')} ${style.kv('lamports', feeLamports.toString())}`,
+          error,
+        );
+      }
+    }
+
+    const base = formatSwapResult(context);
+    const result: SwapExecuteResult = {
+      ...base,
+      signature,
+      solscanUrl: `https://solscan.io/tx/${signature}`,
+    };
+
+    tradeLog.info({
+      event: 'swap.success',
+      tradeId,
+      walletAddress: result.walletAddress,
+      signature: result.signature,
+      direction: result.direction,
+      mode: result.mode,
+      priceImpactPct: result.priceImpactPct ?? null,
+      warnings: result.warnings,
+      durationMs: Date.now() - startedAt,
+    });
+
+    return result;
+  } catch (error: any) {
+    tradeLog.error({
+      event: 'swap.failure',
+      tradeId,
+      walletAddress: resolvedWallet,
+      supabaseUserId: request.supabaseUserId ?? null,
+      message: error?.message || String(error),
+      code: error?.code,
+      details: error?.details,
+      durationMs: Date.now() - startedAt,
+    });
+    throw error;
+  }
 }
 
 async function getMintDecimals(mint: PublicKey): Promise<number> {
@@ -772,69 +819,108 @@ export interface TradeResult {
 }
 
 export async function executeBuy(request: BuyRequest): Promise<TradeResult> {
-  const tier = await getUserTier(request.supabaseUserId);
-  const links = await getUserWalletLinks(request.supabaseUserId);
-  const walletAddress = selectAccessibleWalletAddress(request.walletAddress ?? null, tier, links);
-  const loaded = await loadManagedWallet(walletAddress);
+  const tradeId = randomUUID();
+  const startedAt = Date.now();
+  const slippageBps = request.slippageBps ?? 100;
+  let walletAddress: string | null = request.walletAddress ?? null;
 
-  const balanceLamports = BigInt(await connection.getBalance(loaded.publicKey, 'confirmed'));
- const amountLamports = BigInt(Math.floor(request.amountSol * LAMPORTS_PER_SOL));
-  if (amountLamports <= 0n) {
-    throw new Error('invalid_amount');
-  }
-  const { feeLamports, swapLamports } = calculateFeeLamports(amountLamports, tier);
-
-  const validation = validateBuyRequest({
-    walletBalanceLamports: balanceLamports,
-    spendLamports: amountLamports,
-    slippageBps: request.slippageBps ?? 100,
-    mint: request.mint,
-  });
-  if (!validation.valid) {
-    throw new Error(validation.errors.map((e) => e.code).join(','));
-  }
-
-  const lamportsForSwap = swapLamports;
-  const quote = await fetchQuote({
-    inputMint: 'So11111111111111111111111111111111111111112',
-    outputMint: request.mint,
-    amount: lamportsForSwap.toString(),
-    slippageBps: request.slippageBps ?? 100,
-    swapMode: 'ExactIn',
-  });
-
-  const swap = await fetchSwapTransaction({
-    quoteResponse: quote,
-    userPublicKey: loaded.publicKey.toBase58(),
-    computeUnitPriceMicroLamports: 10_000,
-  });
-
-  if (!swap.swapTransaction) {
-    const err = swap.error || swap.simulationError || 'swap_failed';
-    throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
-  }
-
-  const signature = await submitSwapTransaction(swap.swapTransaction, loaded.keypair);
-
-  if (feeLamports > 0n && TREASURY_PUBLIC_KEY) {
-    try {
-      await sendLamports(loaded.keypair, TREASURY_PUBLIC_KEY, feeLamports);
-    } catch (error) {
-      tradeLog.warn(
-        `${style.status('fee', 'warn')} ${style.kv('operation', 'executeBuy')} ${style.kv('lamports', feeLamports.toString())}`,
-        error
-      );
-    }
-  }
-
-  return {
-    signature,
+  tradeLog.info({
+    event: 'buy.start',
+    tradeId,
+    supabaseUserId: request.supabaseUserId ?? null,
     walletAddress,
-    feeLamports: feeLamports.toString(),
-    swapLamports: lamportsForSwap.toString(),
-    solscanUrl: `https://solscan.io/tx/${signature}`,
-    warnings: validation.warnings.map((w) => w.code),
-  };
+    mint: request.mint,
+    amountSol: request.amountSol,
+    slippageBps,
+  });
+
+  try {
+    const tier = await getUserTier(request.supabaseUserId);
+    const links = await getUserWalletLinks(request.supabaseUserId);
+    walletAddress = selectAccessibleWalletAddress(request.walletAddress ?? null, tier, links);
+    const loaded = await loadManagedWallet(walletAddress);
+
+    const balanceLamports = BigInt(await connection.getBalance(loaded.publicKey, 'confirmed'));
+    const amountLamports = BigInt(Math.floor(request.amountSol * LAMPORTS_PER_SOL));
+    if (amountLamports <= 0n) {
+      throw new Error('invalid_amount');
+    }
+    const { feeLamports, swapLamports } = calculateFeeLamports(amountLamports, tier);
+
+    const validation = validateBuyRequest({
+      walletBalanceLamports: balanceLamports,
+      spendLamports: amountLamports,
+      slippageBps,
+      mint: request.mint,
+    });
+    if (!validation.valid) {
+      throw new Error(validation.errors.map((e) => e.code).join(','));
+    }
+
+    const lamportsForSwap = swapLamports;
+    const quote = await fetchQuote({
+      inputMint: 'So11111111111111111111111111111111111111112',
+      outputMint: request.mint,
+      amount: lamportsForSwap.toString(),
+      slippageBps,
+      swapMode: 'ExactIn',
+    });
+
+    const swap = await fetchSwapTransaction({
+      quoteResponse: quote,
+      userPublicKey: loaded.publicKey.toBase58(),
+      computeUnitPriceMicroLamports: 10_000,
+    });
+
+    if (!swap.swapTransaction) {
+      const err = swap.error || swap.simulationError || 'swap_failed';
+      throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
+    }
+
+    const signature = await submitSwapTransaction(swap.swapTransaction, loaded.keypair);
+
+    if (feeLamports > 0n && TREASURY_PUBLIC_KEY) {
+      try {
+        await sendLamports(loaded.keypair, TREASURY_PUBLIC_KEY, feeLamports);
+      } catch (error) {
+        tradeLog.warn(
+          `${style.status('fee', 'warn')} ${style.kv('operation', 'executeBuy')} ${style.kv('lamports', feeLamports.toString())}`,
+          error
+        );
+      }
+    }
+
+    const result: TradeResult = {
+      signature,
+      walletAddress,
+      feeLamports: feeLamports.toString(),
+      swapLamports: lamportsForSwap.toString(),
+      solscanUrl: `https://solscan.io/tx/${signature}`,
+      warnings: validation.warnings.map((w) => w.code),
+    };
+
+    tradeLog.info({
+      event: 'buy.success',
+      tradeId,
+      walletAddress,
+      signature: result.signature,
+      durationMs: Date.now() - startedAt,
+      warnings: result.warnings,
+      solscanUrl: result.solscanUrl,
+    });
+
+    return result;
+  } catch (error: any) {
+    tradeLog.error({
+      event: 'buy.failure',
+      tradeId,
+      walletAddress,
+      supabaseUserId: request.supabaseUserId ?? null,
+      message: error?.message || String(error),
+      durationMs: Date.now() - startedAt,
+    });
+    throw error;
+  }
 }
 
 export interface SellRequest {
@@ -847,81 +933,121 @@ export interface SellRequest {
 }
 
 export async function executeSell(request: SellRequest): Promise<TradeResult> {
-  const tier = await getUserTier(request.supabaseUserId);
-  const links = await getUserWalletLinks(request.supabaseUserId);
-  const walletAddress = selectAccessibleWalletAddress(request.walletAddress ?? null, tier, links);
-  const loaded = await loadManagedWallet(walletAddress);
+  const tradeId = randomUUID();
+  const startedAt = Date.now();
+  const slippageBps = request.slippageBps ?? 100;
+  let walletAddress: string | null = request.walletAddress ?? null;
 
-  const mintKey = new PublicKey(request.mint);
-  const ata = await getAssociatedTokenAddress(mintKey, loaded.publicKey, false);
-  const tokenAccountInfo = await getAccount(connection, ata).catch(() => null);
-  if (!tokenAccountInfo) {
-    throw new Error('token_account_not_found');
-  }
-  const mintDecimals = await getMintDecimals(mintKey);
-  const balanceRaw = BigInt(tokenAccountInfo.amount.toString());
-
-  let sellRaw = request.amountRaw ? BigInt(request.amountRaw) : 0n;
-  if (!sellRaw || sellRaw <= 0n) {
-    const pct = request.percentage ?? 100;
-    sellRaw = (balanceRaw * BigInt(Math.round(pct * 100))) / 10_000n;
-    if (sellRaw <= 0n) sellRaw = balanceRaw;
-  }
-
-  const validation = validateSellRequest({
-    tokenBalanceRaw: balanceRaw,
-    sellRaw,
-    slippageBps: request.slippageBps ?? 100,
-    mint: request.mint,
-  });
-
-  if (!validation.valid) {
-    throw new Error(validation.errors.map((e) => e.code).join(','));
-  }
-
-  const quote = await fetchQuote({
-    inputMint: request.mint,
-    outputMint: 'So11111111111111111111111111111111111111112',
-    amount: sellRaw.toString(),
-    slippageBps: request.slippageBps ?? 100,
-    swapMode: 'ExactIn',
-  });
-
-  const swap = await fetchSwapTransaction({
-    quoteResponse: quote,
-    userPublicKey: loaded.publicKey.toBase58(),
-    computeUnitPriceMicroLamports: 10_000,
-  });
-
-  if (!swap.swapTransaction) {
-    const err = swap.error || swap.simulationError || 'swap_failed';
-    throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
-  }
-
-  const signature = await submitSwapTransaction(swap.swapTransaction, loaded.keypair);
-
-  // After swap we assume SOL increased by quote.outAmount
-  const outLamports = BigInt(quote.outAmount);
-  const { feeLamports } = calculateFeeLamports(outLamports, tier);
-  if (feeLamports > 0n && TREASURY_PUBLIC_KEY) {
-    try {
-      await sendLamports(loaded.keypair, TREASURY_PUBLIC_KEY, feeLamports);
-    } catch (error) {
-      tradeLog.warn(
-        `${style.status('fee', 'warn')} ${style.kv('operation', 'executeSell')} ${style.kv('lamports', feeLamports.toString())}`,
-        error
-      );
-    }
-  }
-
-  return {
-    signature,
+  tradeLog.info({
+    event: 'sell.start',
+    tradeId,
+    supabaseUserId: request.supabaseUserId ?? null,
     walletAddress,
-    feeLamports: feeLamports.toString(),
-    swapLamports: sellRaw.toString(),
-    solscanUrl: `https://solscan.io/tx/${signature}`,
-    warnings: validation.warnings.map((w) => w.code),
-  };
+    mint: request.mint,
+    amountRaw: request.amountRaw ?? null,
+    percentage: request.percentage ?? null,
+    slippageBps,
+  });
+
+  try {
+    const tier = await getUserTier(request.supabaseUserId);
+    const links = await getUserWalletLinks(request.supabaseUserId);
+    walletAddress = selectAccessibleWalletAddress(request.walletAddress ?? null, tier, links);
+    const loaded = await loadManagedWallet(walletAddress);
+
+    const mintKey = new PublicKey(request.mint);
+    const ata = await getAssociatedTokenAddress(mintKey, loaded.publicKey, false);
+    const tokenAccountInfo = await getAccount(connection, ata).catch(() => null);
+    if (!tokenAccountInfo) {
+      throw new Error('token_account_not_found');
+    }
+    const mintDecimals = await getMintDecimals(mintKey);
+    const balanceRaw = BigInt(tokenAccountInfo.amount.toString());
+
+    let sellRaw = request.amountRaw ? BigInt(request.amountRaw) : 0n;
+    if (!sellRaw || sellRaw <= 0n) {
+      const pct = request.percentage ?? 100;
+      sellRaw = (balanceRaw * BigInt(Math.round(pct * 100))) / 10_000n;
+      if (sellRaw <= 0n) sellRaw = balanceRaw;
+    }
+
+    const validation = validateSellRequest({
+      tokenBalanceRaw: balanceRaw,
+      sellRaw,
+      slippageBps,
+      mint: request.mint,
+    });
+
+    if (!validation.valid) {
+      throw new Error(validation.errors.map((e) => e.code).join(','));
+    }
+
+    const quote = await fetchQuote({
+      inputMint: request.mint,
+      outputMint: 'So11111111111111111111111111111111111111112',
+      amount: sellRaw.toString(),
+      slippageBps,
+      swapMode: 'ExactIn',
+    });
+
+    const swap = await fetchSwapTransaction({
+      quoteResponse: quote,
+      userPublicKey: loaded.publicKey.toBase58(),
+      computeUnitPriceMicroLamports: 10_000,
+    });
+
+    if (!swap.swapTransaction) {
+      const err = swap.error || swap.simulationError || 'swap_failed';
+      throw new Error(typeof err === 'string' ? err : JSON.stringify(err));
+    }
+
+    const signature = await submitSwapTransaction(swap.swapTransaction, loaded.keypair);
+
+    // After swap we assume SOL increased by quote.outAmount
+    const outLamports = BigInt(quote.outAmount);
+    const { feeLamports } = calculateFeeLamports(outLamports, tier);
+    if (feeLamports > 0n && TREASURY_PUBLIC_KEY) {
+      try {
+        await sendLamports(loaded.keypair, TREASURY_PUBLIC_KEY, feeLamports);
+      } catch (error) {
+        tradeLog.warn(
+          `${style.status('fee', 'warn')} ${style.kv('operation', 'executeSell')} ${style.kv('lamports', feeLamports.toString())}`,
+          error
+        );
+      }
+    }
+
+    const result: TradeResult = {
+      signature,
+      walletAddress,
+      feeLamports: feeLamports.toString(),
+      swapLamports: sellRaw.toString(),
+      solscanUrl: `https://solscan.io/tx/${signature}`,
+      warnings: validation.warnings.map((w) => w.code),
+    };
+
+    tradeLog.info({
+      event: 'sell.success',
+      tradeId,
+      walletAddress,
+      signature: result.signature,
+      durationMs: Date.now() - startedAt,
+      warnings: result.warnings,
+      solscanUrl: result.solscanUrl,
+    });
+
+    return result;
+  } catch (error: any) {
+    tradeLog.error({
+      event: 'sell.failure',
+      tradeId,
+      walletAddress,
+      supabaseUserId: request.supabaseUserId ?? null,
+      message: error?.message || String(error),
+      durationMs: Date.now() - startedAt,
+    });
+    throw error;
+  }
 }
 
 export async function previewSellAll(params: {

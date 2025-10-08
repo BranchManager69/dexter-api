@@ -1,5 +1,11 @@
 <p align="center">
-  <img src="https://docs.dexter.cash/previews/dexter-stack-wordmark.svg" alt="Dexter Stack wordmark" width="360">
+  <img src="./public/wordmarks/dexter-wordmark.svg" alt="Dexter wordmark" width="360">
+</p>
+
+<p align="center">
+  <a href="https://img.shields.io/badge/node-%3E=20-43853d.svg?logo=node.js&logoColor=white"><img src="https://img.shields.io/badge/node-%3E=20-43853d.svg?logo=node.js&logoColor=white" alt="Node.js >=20"></a>
+  <a href="#"><img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha"></a>
+  <a href="https://github.com/openai/openai-agents-js"><img src="https://img.shields.io/badge/openai-agents-blue.svg" alt="OpenAI Agents"></a>
 </p>
 
 <p align="center">
@@ -8,14 +14,6 @@
   · <a href="https://github.com/BranchManager69/dexter-mcp">Dexter MCP</a>
   · <a href="https://github.com/BranchManager69/dexter-ops">Dexter Ops</a>
   · <a href="https://github.com/BranchManager69/pumpstreams">PumpStreams</a>
-</p>
-
-<h1 align="center">Dexter API</h1>
-
-<p align="center">
-  <a href="https://img.shields.io/badge/node-%3E=20-43853d.svg?logo=node.js&logoColor=white"><img src="https://img.shields.io/badge/node-%3E=20-43853d.svg?logo=node.js&logoColor=white" alt="Node.js >=20"></a>
-  <a href="#"><img src="https://img.shields.io/badge/status-alpha-orange.svg" alt="Alpha"></a>
-  <a href="https://github.com/openai/openai-agents-js"><img src="https://img.shields.io/badge/openai-agents-blue.svg" alt="OpenAI Agents"></a>
 </p>
 
 Dexter API orchestrates OpenAI Agents, hosted MCP tools, and Coinbase x402 billing into a single TypeScript service. It powers the Dexter browser clients by minting ephemeral realtime tokens, proxying Model Context Protocol tooling, and wiring Supabase identity into wallets and pro tiers.

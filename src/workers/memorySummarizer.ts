@@ -39,11 +39,11 @@ const DOSSIER_SCHEMA = {
   schema: {
     type: 'object',
     additionalProperties: false,
-    required: ['identity', 'holdings', 'preferences', 'stats', 'next_conversation_prompt'],
+    required: ['identity', 'holdings', 'stats', 'next_conversation_prompt'],
     properties: {
       identity: {
         type: 'object',
-        additionalProperties: true,
+        additionalProperties: false,
         required: ['preferredName'],
         properties: {
           preferredName: { type: 'string' },
@@ -59,7 +59,7 @@ const DOSSIER_SCHEMA = {
         type: 'array',
         items: {
           type: 'object',
-          additionalProperties: true,
+          additionalProperties: false,
           required: ['symbol'],
           properties: {
             symbol: { type: 'string' },
@@ -76,7 +76,7 @@ const DOSSIER_SCHEMA = {
       },
       stats: {
         type: 'object',
-        additionalProperties: true,
+        additionalProperties: false,
         required: ['firstConversationAt', 'lastConversationAt', 'memoryCount'],
         properties: {
           firstConversationAt: { type: 'string' },
@@ -94,28 +94,24 @@ const DOSSIER_SCHEMA = {
 type UserDossier = {
   identity: {
     preferredName: string;
-    email?: string | null;
-    walletAddress?: string | null;
-    otherIds?: string[];
-    [key: string]: any;
+    email: string;
+    walletAddress: string;
+    otherIds: string[];
   };
   holdings: Array<{
     symbol: string;
-    mintAddress?: string | null;
-    usdValue?: string | null;
-    marketCapUsd?: string | null;
-    portfolioWeightPct?: string | null;
-    [key: string]: any;
+    mintAddress: string;
+    usdValue: string;
+    marketCapUsd: string;
+    portfolioWeightPct: string;
   }>;
   preferences: Record<string, any>;
   stats: {
-    firstConversationAt: string | null;
-    lastConversationAt: string | null;
+    firstConversationAt: string;
+    lastConversationAt: string;
     memoryCount: number;
-    [key: string]: any;
   };
   nextConversationPrompt: string;
-  [key: string]: any;
 };
 
 type DossierFallback = {
@@ -199,7 +195,7 @@ function sanitizeDossier(raw: any, fallback: DossierFallback): UserDossier {
       ? fallback.email.trim()
       : existing && typeof existing.identity?.email === 'string' && existing.identity.email.trim().length
         ? existing.identity.email.trim()
-        : null;
+        : '';
 
   const walletCandidate = typeof identitySource.walletAddress === 'string' && identitySource.walletAddress.trim().length
     ? identitySource.walletAddress.trim()
@@ -207,7 +203,7 @@ function sanitizeDossier(raw: any, fallback: DossierFallback): UserDossier {
       ? fallback.walletAddress.trim()
       : existing && typeof existing.identity?.walletAddress === 'string' && existing.identity.walletAddress.trim().length
         ? existing.identity.walletAddress.trim()
-        : null;
+        : '';
 
   const otherIdsMerged = new Set<string>();
   const addIds = (value: any) => {
@@ -227,15 +223,10 @@ function sanitizeDossier(raw: any, fallback: DossierFallback): UserDossier {
 
   const identity: UserDossier['identity'] = {
     preferredName,
+    email: emailCandidate,
+    walletAddress: walletCandidate,
+    otherIds: Array.from(otherIdsMerged),
   };
-  if (emailCandidate) identity.email = emailCandidate;
-  if (walletCandidate) identity.walletAddress = walletCandidate;
-  if (otherIdsMerged.size) identity.otherIds = Array.from(otherIdsMerged);
-
-  for (const [key, value] of Object.entries(identitySource)) {
-    if (['preferredName', 'email', 'walletAddress', 'otherIds'].includes(key)) continue;
-    identity[key] = value;
-  }
 
   const holdingsSource = Array.isArray(raw?.holdings)
     ? raw.holdings as any[]
@@ -248,42 +239,37 @@ function sanitizeDossier(raw: any, fallback: DossierFallback): UserDossier {
       if (!entry || typeof entry !== 'object') return null;
       const symbol = typeof (entry as any).symbol === 'string' ? (entry as any).symbol.trim() : '';
       if (!symbol) return null;
-      const normalized: Record<string, any> = { symbol };
+      const normalized: UserDossier['holdings'][number] = {
+        symbol,
+        mintAddress: '',
+        usdValue: '',
+        marketCapUsd: '',
+        portfolioWeightPct: '',
+      };
 
       const mintAddress = (entry as any).mintAddress;
       if (typeof mintAddress === 'string' && mintAddress.trim().length) {
         normalized.mintAddress = mintAddress.trim();
       }
 
-      const numericFields: Array<{ key: string; value: any }> = [
-        { key: 'usdValue', value: (entry as any).usdValue },
-        { key: 'marketCapUsd', value: (entry as any).marketCapUsd },
-        { key: 'portfolioWeightPct', value: (entry as any).portfolioWeightPct },
-      ];
-      for (const field of numericFields) {
-        if (typeof field.value === 'number') {
-          normalized[field.key] = field.value.toString();
-        } else if (typeof field.value === 'string' && field.value.trim().length) {
-          normalized[field.key] = field.value.trim();
+      const setMetric = (
+        key: 'usdValue' | 'marketCapUsd' | 'portfolioWeightPct',
+        value: any,
+      ) => {
+        if (typeof value === 'number') {
+          normalized[key] = value.toString();
+        } else if (typeof value === 'string' && value.trim().length) {
+          normalized[key] = value.trim();
         }
-      }
+      };
 
-      for (const [key, value] of Object.entries(entry as Record<string, any>)) {
-        if (['symbol', 'mintAddress', 'usdValue', 'marketCapUsd', 'portfolioWeightPct'].includes(key)) continue;
-        normalized[key] = value;
-      }
+      setMetric('usdValue', (entry as any).usdValue);
+      setMetric('marketCapUsd', (entry as any).marketCapUsd);
+      setMetric('portfolioWeightPct', (entry as any).portfolioWeightPct);
 
       return normalized;
     })
     .filter(Boolean) as UserDossier['holdings'];
-
-  const existingPreferences = existing && existing.preferences && typeof existing.preferences === 'object' && !Array.isArray(existing.preferences)
-    ? existing.preferences as Record<string, any>
-    : {};
-  const rawPreferences = raw && raw.preferences && typeof raw.preferences === 'object' && !Array.isArray(raw.preferences)
-    ? raw.preferences as Record<string, any>
-    : {};
-  const preferences = { ...existingPreferences, ...rawPreferences };
 
   const statsSource = raw && raw.stats && typeof raw.stats === 'object'
     ? raw.stats as Record<string, any>
@@ -291,11 +277,26 @@ function sanitizeDossier(raw: any, fallback: DossierFallback): UserDossier {
       ? existing.stats as Record<string, any>
       : {};
 
+  const preferences = (() => {
+    const existingPreferences = existing && existing.preferences && typeof existing.preferences === 'object'
+      ? existing.preferences
+      : {};
+    const rawPreferences = raw && raw.preferences && typeof raw.preferences === 'object'
+      ? raw.preferences
+      : {};
+    return { ...existingPreferences, ...rawPreferences };
+  })();
+
   const stats: UserDossier['stats'] = {
-    ...(statsSource as Record<string, any>),
-    firstConversationAt: fallback.firstConversationAt,
-    lastConversationAt: fallback.lastConversationAt,
-    memoryCount: fallback.memoryCount,
+    firstConversationAt: typeof statsSource.firstConversationAt === 'string'
+      ? statsSource.firstConversationAt
+      : fallback.firstConversationAt || '',
+    lastConversationAt: typeof statsSource.lastConversationAt === 'string'
+      ? statsSource.lastConversationAt
+      : fallback.lastConversationAt || '',
+    memoryCount: typeof statsSource.memoryCount === 'number'
+      ? statsSource.memoryCount
+      : fallback.memoryCount,
   };
 
   const promptCandidate = (() => {
@@ -318,22 +319,6 @@ function sanitizeDossier(raw: any, fallback: DossierFallback): UserDossier {
     stats,
     nextConversationPrompt: sanitizeNextConversationPrompt(promptCandidate),
   };
-
-  if (raw && typeof raw === 'object') {
-    for (const [key, value] of Object.entries(raw as Record<string, any>)) {
-      if (['identity', 'holdings', 'preferences', 'stats', 'next_conversation_prompt'].includes(key)) continue;
-      (dossier as Record<string, any>)[key] = value;
-    }
-  }
-
-  if (existing && typeof existing === 'object') {
-    for (const [key, value] of Object.entries(existing as Record<string, any>)) {
-      if (['identity', 'holdings', 'preferences', 'stats', 'nextConversationPrompt'].includes(key)) continue;
-      if (!(key in dossier)) {
-        (dossier as Record<string, any>)[key] = value;
-      }
-    }
-  }
 
   return dossier;
 }

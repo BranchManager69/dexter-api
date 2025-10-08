@@ -105,7 +105,6 @@ export async function ensureUserWallet(env: Env, options: WalletAssignmentOption
   try {
     mcpJwt = issueMcpJwt(env, {
       supabase_user_id: supabaseUserId,
-      supabase_email: options.email ?? null,
       wallet_public_key: wallet.public_key,
       roles: options.roles ?? null,
     });

@@ -66,7 +66,7 @@ export function issueMcpJwt(
       })
       .filter(Boolean);
     if (normalizedRoles.length > 0) {
-      tokenPayload.roles = normalizedRoles;
+      tokenPayload.roles = normalizedRoles.join('|');
     }
   }
 

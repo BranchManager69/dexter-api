@@ -286,7 +286,7 @@ app.post('/realtime/sessions', async (req, res) => {
     if (identity.sessionType === 'user' && identity.supabaseUserId) {
       walletAssignment = await ensureUserWallet(env, {
         supabaseUserId: identity.supabaseUserId,
-        email: identity.supabaseEmail ?? null,
+        email: null,
         roles: identity.roles ?? null,
       });
     }

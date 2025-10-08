@@ -1,5 +1,8 @@
 import jwt from 'jsonwebtoken';
 import type { Env } from '../env.js';
+import { logger, style } from '../logger.js';
+
+const log = logger.child('mcpJwt');
 
 export type McpJwtPayload = {
   supabase_user_id: string | null;
@@ -47,11 +50,15 @@ export function issueMcpJwt(
     supabase_user_id: supabaseUserId,
   };
 
+  const optionalClaims: Array<'supabase_email' | 'scope'> = [];
+
   if (payload.supabase_email) {
     tokenPayload.supabase_email = payload.supabase_email;
+    optionalClaims.push('supabase_email');
   }
   if (payload.scope) {
     tokenPayload.scope = payload.scope;
+    optionalClaims.push('scope');
   }
   if (payload.wallet_public_key) {
     tokenPayload.wallet_public_key = payload.wallet_public_key;
@@ -66,15 +73,62 @@ export function issueMcpJwt(
       })
       .filter(Boolean);
     if (normalizedRoles.length > 0) {
-      tokenPayload.roles = normalizedRoles.join('|');
+      const uniqueRoles = Array.from(new Set(normalizedRoles)).sort();
+      tokenPayload.roles = uniqueRoles;
     }
   }
 
-  return jwt.sign(tokenPayload, secret, {
-    algorithm: 'HS256',
-    header: {
-      typ: 'JWT',
-      alg: 'HS256',
+  const BEARER_PREFIX = 'Bearer ';
+  const MAX_AUTH_HEADER_LENGTH = 512;
+  const MAX_TOKEN_LENGTH = MAX_AUTH_HEADER_LENGTH - BEARER_PREFIX.length;
+
+  const signToken = (payloadToSign: Record<string, any>) =>
+    jwt.sign(payloadToSign, secret, {
+      algorithm: 'HS256',
+      header: {
+        typ: 'JWT',
+        alg: 'HS256',
+      },
+    });
+
+  const trySign = (payloadToSign: Record<string, any>) => {
+    const token = signToken(payloadToSign);
+    const headerLength = BEARER_PREFIX.length + token.length;
+    return { token, headerLength };
+  };
+
+  const payloadForSigning: Record<string, any> = { ...tokenPayload };
+  let { token, headerLength } = trySign(payloadForSigning);
+  if (headerLength <= MAX_AUTH_HEADER_LENGTH && token.length <= MAX_TOKEN_LENGTH) {
+    return token;
+  }
+
+  const trimmed: string[] = [];
+  for (const claim of optionalClaims) {
+    if (payloadForSigning[claim] === undefined) {
+      continue;
+    }
+    delete payloadForSigning[claim];
+    trimmed.push(claim);
+
+    ({ token, headerLength } = trySign(payloadForSigning));
+    if (headerLength <= MAX_AUTH_HEADER_LENGTH && token.length <= MAX_TOKEN_LENGTH) {
+      if (trimmed.length) {
+        log.warn(
+          `${style.status('mcp_jwt', 'warn')} ${style.kv('event', 'trimmed_claims')} ${style.kv('claims', trimmed.join(','))} ${style.kv('header_length', headerLength)}`,
+        );
+      }
+      return token;
+    }
+  }
+
+  log.error(
+    `${style.status('mcp_jwt', 'error')} ${style.kv('error', 'jwt_too_long')} ${style.kv('header_length', headerLength)} ${style.kv('token_length', token.length)}`,
+    {
+      trimmed,
+      headerLength,
+      tokenLength: token.length,
     },
-  });
+  );
+  return null;
 }

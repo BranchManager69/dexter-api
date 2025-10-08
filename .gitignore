@@ -9,6 +9,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Dev docs
+docs/docs-dev/
+
 # Environment files
 .env
 .env.local

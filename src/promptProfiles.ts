@@ -83,6 +83,10 @@ const DEFAULT_CONCIERGE_PROFILE_DEFINITION: ConciergePromptProfileDefinition = {
       slug: 'agent.concierge.tool.fetch',
       fallback: missingPromptFallback('agent.concierge.tool.fetch'),
     },
+    twitter_search: {
+      slug: 'agent.concierge.tool.twitter_search',
+      fallback: missingPromptFallback('agent.concierge.tool.twitter_search'),
+    },
     codex_start: {
       slug: 'agent.concierge.tool.codex_start',
       fallback: missingPromptFallback('agent.concierge.tool.codex_start'),

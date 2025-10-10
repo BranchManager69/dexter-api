@@ -128,7 +128,7 @@ async function uploadMetadataToPumpFun(metadata: PumpFunMetadataInput): Promise<
   if (metadata.website) formData.set('website', metadata.website);
 
   const { blob, filename } = await resolveImageBlob(metadata.image);
-  formData.append('file', blob, filename);
+  formData.append('file', blob as unknown as globalThis.Blob, filename);
 
   const response = await fetch(PUMP_FUN_IPFS_ENDPOINT, {
     method: 'POST',

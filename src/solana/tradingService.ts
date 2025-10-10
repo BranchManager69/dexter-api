@@ -146,6 +146,17 @@ export interface SwapAmountBreakdown {
   decimals: number;
 }
 
+export interface SwapTokenMetadata {
+  address: string;
+  symbol: string | null;
+  name: string | null;
+  imageUrl: string | null;
+  priceUsd: number | null;
+  priceChange24h: number | null;
+  marketCap: number | null;
+  liquidityUsd: number | null;
+}
+
 export interface SwapPreviewResult {
   walletAddress: string;
   direction: ExtendedSwapDirection;
@@ -166,6 +177,8 @@ export interface SwapPreviewResult {
     outputUsd: number | null;
     netOutputUsd: number | null;
   };
+  inputToken?: SwapTokenMetadata | null;
+  outputToken?: SwapTokenMetadata | null;
 }
 
 export interface SwapExecuteResult extends SwapPreviewResult {

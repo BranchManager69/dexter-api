@@ -11,6 +11,7 @@ import {
   previewSwap,
   resolveToken,
 } from '../solana/tradingService.js';
+import type { SwapPreviewResult, SwapTokenMetadata } from '../solana/tradingService.js';
 import { launchPumpFunToken, PumpFunImageInput } from '../solana/pumpfunService.js';
 import { logger, style } from '../logger.js';
 
@@ -179,6 +180,90 @@ async function fetchTokenMetadataFromDexScreener(mints: string[]): Promise<Map<s
   }
 
   return map;
+}
+
+function toSwapTokenMetadata(metadata: TokenMetadata | undefined, address: string): SwapTokenMetadata | null {
+  if (!metadata) return null;
+  const imageUrl = metadata.imageUrl ?? metadata.headerImageUrl ?? metadata.openGraphImageUrl ?? null;
+  return {
+    address,
+    symbol: metadata.symbol ?? null,
+    name: metadata.name ?? null,
+    imageUrl,
+    priceUsd: metadata.priceUsd ?? null,
+    priceChange24h: metadata.priceChange24h ?? null,
+    marketCap: metadata.marketCap ?? null,
+    liquidityUsd: metadata.liquidityUsd ?? null,
+  };
+}
+
+async function enrichSwapResultWithMetadata<T extends SwapPreviewResult>(
+  result: T,
+  inputMint: string,
+  outputMint: string,
+  log: ReturnType<typeof logger.child>,
+): Promise<T> {
+  const mintCandidates = [inputMint, outputMint]
+    .map((mint) => (typeof mint === 'string' ? mint.trim() : ''))
+    .filter((mint) => mint.length > 0);
+
+  if (!mintCandidates.length) {
+    return Object.assign({}, result, { inputToken: null, outputToken: null });
+  }
+
+  try {
+    const fetchSet = new Set<string>();
+    for (const mint of mintCandidates) {
+      if (mint.toLowerCase() === 'native:sol') {
+        fetchSet.add(WRAPPED_SOL_MINT);
+      } else {
+        fetchSet.add(mint);
+      }
+    }
+
+    const metadataMap = await fetchTokenMetadataFromDexScreener(Array.from(fetchSet));
+
+    const wrappedSol = metadataMap.get(WRAPPED_SOL_MINT);
+    if (wrappedSol) {
+      const mergedSol = mergeTokenMetadata(
+        { ...NATIVE_SOL_METADATA },
+        { ...wrappedSol, address: 'native:SOL' },
+        wrappedSol.liquidityUsd,
+      );
+      metadataMap.set('native:SOL', mergedSol);
+    } else if (!metadataMap.has('native:SOL')) {
+      metadataMap.set('native:SOL', NATIVE_SOL_METADATA);
+    }
+
+    const resolve = (mint: string | undefined): SwapTokenMetadata | null => {
+      if (!mint) return null;
+      const trimmed = mint.trim();
+      if (!trimmed) return null;
+      const lower = trimmed.toLowerCase();
+      let metadata: TokenMetadata | undefined;
+      if (lower === 'native:sol') {
+        metadata = metadataMap.get('native:SOL') ?? metadataMap.get(WRAPPED_SOL_MINT) ?? NATIVE_SOL_METADATA;
+        return toSwapTokenMetadata(metadata, 'native:SOL');
+      }
+      if (trimmed === WRAPPED_SOL_MINT) {
+        metadata = metadataMap.get(WRAPPED_SOL_MINT);
+      } else {
+        metadata = metadataMap.get(trimmed);
+      }
+      return toSwapTokenMetadata(metadata, trimmed);
+    };
+
+    const enrichedInput = resolve(inputMint) ?? null;
+    const enrichedOutput = resolve(outputMint) ?? null;
+
+    return Object.assign({}, result, {
+      inputToken: enrichedInput,
+      outputToken: enrichedOutput,
+    });
+  } catch (error) {
+    log.warn('[solana-swap] token metadata enrichment failed', error);
+    return Object.assign({}, result, { inputToken: null, outputToken: null });
+  }
 }
 
 export function registerSolanaRoutes(app: Express) {
@@ -486,7 +571,8 @@ export function registerSolanaRoutes(app: Express) {
         mode: payload.mode,
         desiredOutputUi: payload.desiredOutputUi ?? undefined,
       });
-      return res.json({ ok: true, result });
+      const enriched = await enrichSwapResultWithMetadata(result, payload.inputMint, payload.outputMint, log);
+      return res.json({ ok: true, result: enriched });
     } catch (error: any) {
       const code = typeof error?.code === 'string' ? error.code : 'swap_preview_failed';
       const message = error?.message || code;
@@ -518,7 +604,8 @@ export function registerSolanaRoutes(app: Express) {
         mode: payload.mode,
         desiredOutputUi: payload.desiredOutputUi ?? undefined,
       });
-      return res.json({ ok: true, result });
+      const enriched = await enrichSwapResultWithMetadata(result, payload.inputMint, payload.outputMint, log);
+      return res.json({ ok: true, result: enriched });
     } catch (error: any) {
       const code = typeof error?.code === 'string' ? error.code : 'swap_failed';
       const message = error?.message || code;
